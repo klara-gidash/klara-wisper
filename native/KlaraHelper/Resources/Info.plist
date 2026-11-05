@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key><string>io.klara.wisper.helper</string>
+    <key>CFBundleName</key><string>Klara Wisper Helper</string>
+    <key>CFBundleDisplayName</key><string>Klara Wisper</string>
+    <key>CFBundleExecutable</key><string>KlaraHelper</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>LSMinimumSystemVersion</key><string>14.4</string>
+    <key>LSUIElement</key><true/>
+    <key>NSMicrophoneUsageDescription</key><string>Klara Wisper מקליטה את המיקרופון כדי לתמלל הכתבות ופגישות, מקומית על המחשב.</string>
+    <key>NSAudioCaptureUsageDescription</key><string>Klara Wisper מקליטה את קול המשתתפים האחרים בשיחות Zoom, Meet, Teams ו-Slack כדי לתמלל אותם, מקומית על המחשב.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key><string>Klara Wisper קוראת את היומן כדי לתת לכל הקלטה את שם הפגישה והמשתתפים.</string>
+    <key>NSAppleEventsUsageDescription</key><string>Klara Wisper בודקת את כתובות הלשוניות בדפדפן כדי לזהות שיחת Google Meet, Teams או Slack.</string>
+</dict>
+</plist>

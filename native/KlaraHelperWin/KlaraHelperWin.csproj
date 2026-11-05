@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Klara Wisper's Windows helper: microphone + loopback capture, call detection, push-to-talk key,
+       paste, AAC encoding. Same newline-JSON protocol on stdin/stdout as native/KlaraHelper (Swift).
+       Build: dotnet publish -c Release -r win-x64 (scripts/make-windows.ps1) -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AssemblyName>KlaraHelper</AssemblyName>
+    <RootNamespace>KlaraHelper</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- NAudio uses built-in COM interop (WASAPI, Media Foundation): not trimmable. -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <DebugType>none</DebugType>
+    <Version>0.1.0</Version>
+    <Product>Klara Wisper</Product>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="NAudio.Core" Version="2.2.1" />
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+  </ItemGroup>
+</Project>

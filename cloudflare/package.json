@@ -1,0 +1,9 @@
+{
+  "name": "klara-wisper-gateway",
+  "private": true,
+  "type": "module",
+  "description": "Optional Cloudflare Worker that serves Klara Wisper transcripts to Claude as a remote MCP connector. No dependencies.",
+  "scripts": {
+    "test": "node --test test/"
+  }
+}

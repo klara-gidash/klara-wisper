@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Klara Wisper</title>
+<meta name="description" content="תמלול שיחות והכתבה בעברית, מקומית על המק, עם Claude לפני, במהלך ואחרי כל שיחה.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b5bd6'/%3E%3Cg fill='%23fff'%3E%3Crect x='6' y='13' width='3' height='6' rx='1.5'/%3E%3Crect x='11' y='9' width='3' height='14' rx='1.5'/%3E%3Crect x='16' y='6' width='3' height='20' rx='1.5'/%3E%3Crect x='21' y='11' width='3' height='10' rx='1.5'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700&family=Assistant:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column, right-to-left, with a transcript-style timeline down the "before / during / after" section. */
+:root {
+  --bg: #f6f6fa;
+  --panel: #ffffff;
+  --ink: #1b1b26;
+  --ink-2: #4f4f63;
+  --ink-3: #8a8aa0;
+  --line: #e3e3ee;
+  --accent: #5b5bd6;
+  --accent-soft: rgba(91, 91, 214, 0.1);
+  --ok: #2f9e6e;
+  --rec: #e5484d;
+  --display: "Rubik", "Arial Hebrew", system-ui, sans-serif;
+  --body: "Assistant", "Arial Hebrew", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111118; --panel: #1a1a24; --ink: #ececf4; --ink-2: #b2b2c6; --ink-3: #7c7c94;
+    --line: #2a2a38; --accent: #8b8bf5; --accent-soft: rgba(139, 139, 245, 0.14); --ok: #45c08a; --rec: #f06a6e;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111118; --panel: #1a1a24; --ink: #ececf4; --ink-2: #b2b2c6; --ink-3: #7c7c94;
+  --line: #2a2a38; --accent: #8b8bf5; --accent-soft: rgba(139, 139, 245, 0.14); --ok: #45c08a; --rec: #f06a6e;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg); color: var(--ink); font: 400 17px/1.65 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+}
+main { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 48px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(30px, 6vw, 42px); font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; }
+h2 { font-size: 24px; font-weight: 600; }
+h3 { font-size: 17px; font-weight: 600; }
+p { margin: 0; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+section { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.lede { color: var(--ink-2); font-size: 18px; max-width: 60ch; }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: 0.08em; color: var(--ink-3); text-transform: uppercase; }
+.hero { display: flex; flex-direction: column; gap: 14px; }
+.wave { display: flex; align-items: center; gap: 3px; height: 28px; }
+.wave i { display: block; width: 3px; border-radius: 2px; background: var(--accent); opacity: 0.85; }
+.links { display: flex; flex-wrap: wrap; gap: 10px; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 10px; font: 600 15px/1 var(--body); text-decoration: none; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+ol.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; counter-reset: s; }
+ol.steps > li { counter-increment: s; display: grid; grid-template-columns: 30px 1fr; gap: 12px; align-items: start; }
+ol.steps > li::before { content: counter(s); font: 600 14px/30px var(--display); text-align: center; width: 30px; height: 30px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); }
+ol.steps > li > div { min-width: 0; }
+.muted { color: var(--ink-2); }
+.small { font-size: 15px; }
+code, .cmd { font-family: var(--mono); font-size: 14px; }
+code { background: var(--accent-soft); padding: 1px 6px; border-radius: 5px; direction: ltr; unicode-bidi: isolate; white-space: nowrap; }
+.cmdrow { display: flex; gap: 8px; align-items: stretch; margin-top: 8px; }
+.cmd { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; direction: ltr; text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; }
+.cmd.he { direction: rtl; text-align: right; font: 400 16px/1.4 var(--body); }
+.copy { font: 600 13px/1 var(--body); border: 1px solid var(--line); background: var(--panel); color: var(--ink-2); border-radius: 8px; padding: 0 12px; cursor: pointer; flex: none; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 15px; }
+th, td { text-align: start; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 13px/1.3 var(--body); color: var(--ink-3); }
+tr:last-child td { border-bottom: 0; }
+.tag { display: inline-block; font: 600 11.5px/1.6 var(--body); padding: 0 7px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+.tag.ok { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.card p { color: var(--ink-2); font-size: 15.5px; }
+.card .k { font: 500 12px/1 var(--mono); letter-spacing: 0.06em; color: var(--accent); text-transform: uppercase; }
+.note { background: var(--accent-soft); border-inline-start: 3px solid var(--accent); border-radius: 10px; padding: 12px 16px; font-size: 15.5px; }
+ul.plain { margin: 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 6px; }
+.timeline { display: flex; flex-direction: column; gap: 0; border-inline-start: 2px solid var(--line); margin-inline-start: 8px; }
+.moment { position: relative; padding-inline-start: 22px; padding-block: 4px 22px; display: flex; flex-direction: column; gap: 6px; }
+.moment:last-child { padding-block-end: 4px; }
+.moment::before { content: ""; position: absolute; inset-inline-start: -7px; top: 9px; width: 12px; height: 12px; border-radius: 50%; background: var(--panel); border: 2px solid var(--accent); }
+.moment.live::before { border-color: var(--rec); background: var(--rec); }
+.say { display: flex; flex-wrap: wrap; gap: 8px; }
+.say span { font-size: 15px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; }
+.ts { font: 500 12.5px/1 var(--mono); color: var(--ink-3); direction: ltr; unicode-bidi: isolate; }
+.line { display: grid; grid-template-columns: auto auto 1fr; gap: 10px; align-items: baseline; font-size: 15px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.line b { font-weight: 600; }
+.faq { display: flex; flex-direction: column; gap: 10px; }
+details { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
+summary { cursor: pointer; font-weight: 600; }
+details p { margin-top: 8px; color: var(--ink-2); }
+footer { color: var(--ink-3); font-size: 14px; border-top: 1px solid var(--line); padding-top: 18px; display: flex; flex-direction: column; gap: 6px; }
+@media (prefers-reduced-motion: no-preference) {
+  .wave i { animation: bob 1.6s ease-in-out infinite; }
+}
+@keyframes bob { 50% { transform: scaleY(0.55); } }
+</style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <div class="wave" aria-hidden="true" id="wave"></div>
+    <span class="eyebrow">Klara Wisper · macOS</span>
+    <h1>תמלול שיחות והכתבה בעברית, מקומית על המק, עם Claude לפני, במהלך ואחרי כל שיחה</h1>
+    <p class="lede">Zoom, Meet, Teams, Slack ו-Aircall מוקלטים לבד, מהאפליקציה ומהדפדפן. כל שיחה מקבלת את השם שלה מהיומן, ו-Claude מסכם אותה דקה-שתיים אחרי שהיא נגמרת. התמלול רץ על המחשב, והאודיו לא יוצא ממנו.</p>
+    <div class="links">
+      <a class="btn primary" href="https://github.com/klara-gidash/klara-wisper/releases/latest">הורדת התוכנה</a>
+      <a class="btn" href="https://github.com/klara-gidash/klara-wisper/blob/main/docs/INSTALL.he.md">מדריך ההתקנה</a>
+      <a class="btn" href="https://github.com/klara-gidash/klara-wisper">הקוד ב-GitHub</a>
+      <a class="btn" href="https://github.com/klara-gidash/klara-wisper-skills">הסקילים ל-Claude</a>
+    </div>
+    <p class="muted small">למק עם שבב Apple (M1 ומעלה) ו-macOS 14.4 ומעלה. Claude עובד עם המנוי הרגיל, בלי מפתח API.</p>
+  </header>
+
+  <section aria-labelledby="what">
+    <h2 id="what">מה התוכנה עושה</h2>
+    <div class="grid">
+      <div class="card">
+        <span class="k">Transcribe</span>
+        <h3>תמלול שיחות בעברית, על המק</h3>
+        <p>Whisper עם המודל העברי של ivrit.ai רץ על המחשב עצמו. התמלול מופיע בזמן אמת בחלונית צדדית, ואחרי השיחה מתווספת הפרדה בין הדוברים.</p>
+      </div>
+      <div class="card">
+        <span class="k">Dictate</span>
+        <h3>הכתבה בכל אפליקציה</h3>
+        <p>לוחצים לחיצה ארוכה על מקש fn, מדברים ומשחררים. הטקסט מודבק בשדה הפעיל: מייל, Slack, מסמך או צ'אט.</p>
+      </div>
+      <div class="card">
+        <span class="k">Detect</span>
+        <h3>זיהוי שיחות אוטומטי</h3>
+        <p>כשהמיקרופון נפתח בשיחת Zoom, Meet, Teams, Slack או Aircall, ההקלטה מתחילה לבד, גם בלשונית בדפדפן. לפגישה פנים מול פנים מתחילים הקלטה מהתפריט.</p>
+      </div>
+      <div class="card">
+        <span class="k">Calendar</span>
+        <h3>שם ומשתתפים מהיומן</h3>
+        <p>כל שיחה מקבלת את השם ואת רשימת המשתתפים מהאירוע ביומן. שיחה מזדמנת, בלי אירוע, מקבלת מ-Claude שם שמתאר אותה.</p>
+      </div>
+      <div class="card">
+        <span class="k">Summary</span>
+        <h3>סיכום אוטומטי אחרי כל שיחה</h3>
+        <p>תקציר, החלטות, משימות עם אחראים ושאלות פתוחות, בעברית, שמורים ליד התמלול. עובד עם המנוי הרגיל ל-Claude.</p>
+      </div>
+      <div class="card">
+        <span class="k">Claude</span>
+        <h3>Claude מכיר את כל השיחות</h3>
+        <p>דרך שרת MCP מקומי, Claude Desktop ו-Claude Code יכולים לחפש בשיחות ובהכתבות, להכין לפגישה, להשלים מה שפוספס, ולסכם את היום.</p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="flow">
+    <h2 id="flow">Claude לפני, במהלך ואחרי שיחה</h2>
+    <p class="muted">ארבעה סקילים מוכנים. את הבקשות כותבים ל-Claude במילים רגילות.</p>
+    <div class="timeline">
+      <div class="moment">
+        <span class="ts">−10:00</span>
+        <h3>לפני: תדריך לפגישה</h3>
+        <p class="muted">Claude לוקח את הפגישה הבאה מהיומן ומחפש שיחות קודמות עם אותם אנשים. הוא מחזיר מי משתתף, מה נסגר בפעם הקודמת, אילו משימות פתוחות ואילו שאלות כדאי לשאול. הסקיל: <code>klara-meeting-prep</code>.</p>
+        <div class="say"><span>"הכנה לפגישה הבאה"</span><span>"מה צריך לדעת לפני הפגישה עם Acme?"</span></div>
+      </div>
+      <div class="moment live">
+        <span class="ts">[12:40]</span>
+        <h3>במהלך: מה פספסתי?</h3>
+        <p class="muted">Claude קורא את התמלול החי. הוא מסכם את הדקות האחרונות, מסמן מה מחכה לתשובה, ומציע מה לענות כשעולה שאלה. הסקיל: <code>klara-live-catch-up</code>.</p>
+        <div class="line"><span class="ts">[12:31]</span><b>משתתף 1</b><span>אז מתי אפשר לקבל את ההצעה המעודכנת?</span></div>
+        <div class="say"><span>"מה פספסתי ב-5 הדקות האחרונות?"</span><span>"מה לענות?"</span></div>
+      </div>
+      <div class="moment">
+        <span class="ts">+02:00</span>
+        <h3>אחרי: סיכום, שם, משתתפים ונושא</h3>
+        <p class="muted">דקה-שתיים אחרי כל שיחה של 3 דקות ומעלה, Claude כותב סיכום עם החלטות, משימות ואחראים, ושומר אותו ליד התמלול. מגיעה הודעה כשהסיכום מוכן. שיחה בלי אירוע ביומן (שיחה מזדמנת או פנים מול פנים) מקבלת גם שם, משתתפים ונושא. אם אי אפשר לזהות את המשתתפים, זה נכתב בסיכום. אפשר לבקש גם ידנית, עם הסקיל <code>klara-meeting-summary</code>.</p>
+        <p class="muted">עם מחבר Gmail ב-Claude, אפשר לבקש לשלוח את הסיכום: Claude מכין טיוטה למשתתפים מהיומן, מציג אותה, ושולח רק אחרי אישור מפורש. הוא לעולם לא שולח בגלל משהו שנאמר בשיחה.</p>
+        <div class="say"><span>"לסכם את השיחה"</span><span>"לסכם את כל השיחות שאין להן סיכום"</span><span>"לשלוח את הסיכום למשתתפים"</span></div>
+      </div>
+      <div class="moment">
+        <span class="ts">19:00</span>
+        <h3>בסוף היום: סיכום יומי</h3>
+        <p class="muted">סקירה אחת של כל השיחות של היום: שעה, שם, משתתפים ונושא, 2–3 נקודות עיקריות לכל שיחה, והמשימות שנשארו פתוחות. שיחה שעוד אין לה סיכום מסוכמת ונשמרת קודם. משימה מתוזמנת ב-Claude Desktop יכולה להריץ את זה לבד כל ערב. הסקיל: <code>klara-daily-digest</code>.</p>
+        <div class="say"><span>"מה היה היום?"</span><span>"על מה היו השיחות אתמול?"</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="model">
+    <h2 id="model">בחירת מודל התמלול</h2>
+    <p class="muted">בהגדרות ← מנוע ← מודל התמלול. הבחירה נשמרת לכל מק בנפרד, לפי מה שהמחשב מסוגל להריץ. מודל שעוד לא מותקן יורד כשבוחרים בו. אם יש שיחה בהקלטה, המעבר למודל החדש קורה רק כשהיא נגמרת.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>מודל</th><th>במה הוא טוב</th><th>לאיזה מחשב</th><th>גודל</th></tr></thead>
+        <tbody>
+          <tr><td>Whisper turbo · ivrit.ai <span class="tag ok">מומלץ</span></td><td>המהיר ביותר והמדויק ביותר בעברית</td><td>כל מק, גם עם 16GB</td><td class="ts">1.6 GB</td></tr>
+          <tr><td>Whisper large-v3 turbo (OpenAI)</td><td>עברית ואנגלית, עם זיהוי שפה אוטומטי</td><td>כל מק</td><td class="ts">1.6 GB</td></tr>
+          <tr><td>Whisper large-v3 (OpenAI)</td><td>הכי טוב לאנגלית ולשיחות מעורבות, אבל איטי פי כמה</td><td>Pro / Max / Ultra, או 32GB ומעלה</td><td class="ts">3.1 GB</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>שפת התמלול</h3>
+    <div class="grid">
+      <div class="card">
+        <h3>עברית בלבד</h3>
+        <p>מתאים לרוב השיחות. מילים באנגלית שנאמרות באמצע נכתבות באותיות לועזיות או בתעתיק.</p>
+      </div>
+      <div class="card">
+        <h3>עברית ואנגלית, זיהוי אוטומטי</h3>
+        <p>השפה מזוהה לבד בכל משפט. מתאים לשיחות באנגלית ולשיחות שעוברות בין השפות.</p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="phone">
+    <h2 id="phone">לשאול את Claude מהטלפון</h2>
+    <p>אופציונלי: מחבר שרץ בחשבון Cloudflare פרטי, ומאפשר ל-Claude באפליקציה בטלפון לענות על השיחות. אפשר לבקש את הסיכום היומי, לחפש נושא, או לקרוא מה סוכם בשיחה מסוימת.</p>
+    <div class="say"><span>"מה היה היום?"</span><span>"מה סוכם עם Acme?"</span><span>"איפה דיברנו על תמחור?"</span></div>
+    <p class="note">המחבר קריאה בלבד: מהטלפון לא משנים ולא שומרים כלום. בלעדיו, הכל נשאר על המק. מה עולה ל-Cloudflare ואיך מקימים: <a href="https://github.com/klara-gidash/klara-wisper/blob/main/docs/CLOUDFLARE.he.md">המדריך למחבר</a>.</p>
+  </section>
+
+  <section aria-labelledby="install">
+    <h2 id="install">התקנה</h2>
+    <ol class="steps">
+      <li><div><h3>להוריד</h3><p class="muted">בעמוד ה-<a href="https://github.com/klara-gidash/klara-wisper/releases/latest">Releases</a> מורידים את <code>Klara Wisper.dmg</code>. צריך מק עם שבב Apple (M1 ומעלה), macOS 14.4 ומעלה, ובערך 4GB פנויים.</p></div></li>
+      <li><div><h3>לגרור ל-Applications ולפתוח</h3><p class="muted">בפתיחה הראשונה macOS חוסם את האפליקציה כי היא לא חתומה אצל Apple. פותחים את הגדרות המערכת ← פרטיות ואבטחה ← "לפתוח בכל זאת". צריך לעשות את זה פעם אחת.</p></div></li>
+      <li><div><h3>ההקמה הראשונה</h3><p class="muted">האפליקציה מתקינה לבד את מנוע התמלול ומורידה את המודלים (כ-2.4GB, עם פס התקדמות). אין צורך בהרשאות מנהל.</p></div></li>
+      <li><div><h3>הרשאות</h3><p class="muted">מיקרופון, קול המחשב, נגישות (להדבקת הכתבה), ניטור מקלדת (מקש fn), יומן, ואוטומציה לדפדפן (לזיהוי Meet ו-Teams בלשונית). מסך ההקמה מבקש את כולן.</p></div></li>
+      <li><div><h3>היומן של Google</h3><p class="muted">מוסיפים את חשבון ה-Google ב"הגדרות המערכת ← חשבונות אינטרנט". מכאן כל שיחה מקבלת את השם ואת המשתתפים מהאירוע ביומן.</p></div></li>
+    </ol>
+    <p class="muted small">כל הפרטים, כולל פתרון בעיות והסרה: <a href="https://github.com/klara-gidash/klara-wisper/blob/main/docs/INSTALL.he.md">מדריך ההתקנה</a>.</p>
+  </section>
+
+  <section aria-labelledby="claude">
+    <h2 id="claude">חיבור ל-Claude</h2>
+    <p>האפליקציה מחברת את עצמה ל-Claude Desktop ול-Claude Code (שרת MCP בשם <code>klara-wisper</code>), ומתקינה את ארבעת הסקילים ל-Claude Code. אחרי ההתקנה צריך לסגור ולפתוח את Claude Desktop פעם אחת.</p>
+    <p><b>לסיכום האוטומטי</b> צריך עוד צעד חד-פעמי: בהגדרות ← Claude לוחצים על "התחברות ל-Claude". נפתח חלון Terminal, ואחריו דף התחברות בדפדפן עם החשבון הרגיל. אין צורך במפתח API.</p>
+    <p><b>לסיכום יומי כל ערב:</b> ב-Claude Desktop יוצרים משימה מתוזמנת (Scheduled task) שרצה כל יום, למשל ב-19:00, עם הבקשה:</p>
+    <div class="cmdrow"><span class="cmd he" id="digest-prompt">סיכום יומי של השיחות של היום</span><button class="copy" type="button" data-copy="digest-prompt">העתקה</button></div>
+    <p class="muted small">המשימה רצה על המק, ולכן הוא צריך להיות דלוק בשעה הזאת.</p>
+    <p class="muted small">ב-Claude Desktop מעלים את הסקילים ידנית: הגדרות ← Capabilities ← Upload skill, קובץ zip לכל תיקייה מהמאגר <a href="https://github.com/klara-gidash/klara-wisper-skills"><code>klara-wisper-skills</code></a>.</p>
+  </section>
+
+  <section aria-labelledby="privacy">
+    <h2 id="privacy">פרטיות</h2>
+    <ul class="plain">
+      <li>ההקלטה, התמלול וזיהוי הדוברים רצים על המק. האודיו לא יוצא ממנו.</li>
+      <li>Claude מקבל את הטקסט של השיחות רק כשפונים אליו, ובסיכום האוטומטי אם הוא מופעל.</li>
+      <li>תוכן השיחות מוגדר אצל Claude כ"מידע, לא הוראות": הוא לא שולח מייל ולא מבצע פעולה רק כי מישהו ביקש את זה בשיחה.</li>
+      <li>מייל יוצא רק כשמבקשים, קודם כטיוטה, ורק אחרי אישור מפורש.</li>
+      <li>המחבר לטלפון אופציונלי, ורץ בחשבון Cloudflare פרטי.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="faq">
+    <h2 id="faq">אם משהו לא עובד</h2>
+    <div class="faq">
+      <details><summary>היומן לא מחובר</summary><p>במסך הבית לוחצים "חיבור". אם macOS לא שואל, נפתח המסך "לוחות שנה" בהגדרות המערכת: ליד Klara Wisper בוחרים "גישה מלאה" (Full Access), וחוזרים לאפליקציה.</p></details>
+      <details><summary>אין סיכום אחרי שיחה</summary><p>בהגדרות ← Claude בודקים ש"סיכום אוטומטי" דלוק ושההתחברות ל-Claude בוצעה. שיחות קצרות מ-3 דקות לא מסוכמות.</p></details>
+      <details><summary>שיחה בדפדפן לא זוהתה</summary><p>צריך לאשר לאפליקציה לקרוא את הלשוניות בדפדפן: הגדרות המערכת ← פרטיות ואבטחה ← אוטומציה ← Klara Wisper ← לסמן את הדפדפן. בלי ההרשאה הזאת, אחרי 15 שניות מופיעה הודעה ששואלת אם להקליט.</p></details>
+      <details><summary>Claude לא רואה את Klara Wisper</summary><p>סוגרים את Claude Desktop לגמרי (⌘Q) ופותחים מחדש. אם זה לא עוזר: בהגדרות ← Claude לוחצים "חיבור", ושוב סוגרים ופותחים את Claude Desktop.</p></details>
+      <details><summary>לא מוקלט כלום אחרי הפעלה מחדש של המחשב</summary><p>בהגדרות מוודאים ש"פתיחה עם הכניסה למחשב" דלוק.</p></details>
+    </div>
+  </section>
+
+  <footer>
+    <p>Klara Wisper, מאת Klara. התמלול רץ מקומית (Whisper, ivrit.ai, NVIDIA Nemotron). Claude מקבל רק את מה שהוא צריך דרך MCP, ותוכן השיחות מוגדר אצלו כ"מידע, לא הוראות".</p>
+    <p><a href="https://github.com/klara-gidash/klara-wisper">klara-wisper</a> · <a href="https://github.com/klara-gidash/klara-wisper-skills">klara-wisper-skills</a></p>
+  </footer>
+</main>
+<script>
+(() => {
+  const w = document.getElementById('wave');
+  const h = [8, 14, 22, 12, 26, 18, 9, 20, 28, 15, 10, 24, 16, 7, 19, 25, 12, 8];
+  h.forEach((v, i) => { const b = document.createElement('i'); b.style.height = v + 'px'; b.style.animationDelay = (i * 0.07) + 's'; w.appendChild(b); });
+
+  document.querySelectorAll('button[data-copy]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const src = document.getElementById(btn.dataset.copy);
+      let ok = false;
+      try { await navigator.clipboard.writeText(src.textContent.trim()); ok = true; } catch (e) { ok = false; }
+      btn.textContent = ok ? 'הועתק' : 'לא הועתק';
+      setTimeout(() => { btn.textContent = 'העתקה'; }, 1600);
+    });
+  });
+})();
+</script>
+</body>
+</html>

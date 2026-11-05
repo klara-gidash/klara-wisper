@@ -1,0 +1,51 @@
+{
+  "name": "klara-wisper",
+  "productName": "Klara Wisper",
+  "version": "0.1.0",
+  "description": "Local meeting transcription and dictation (Whisper large-v3 + Nemotron diarization)",
+  "author": "Klara Gidash",
+  "license": "MIT",
+  "private": true,
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test:detector": "node --test test/detector.test.mts",
+    "build:helper": "bash scripts/build-helper.sh",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "dist": "bash scripts/dist.sh"
+  },
+  "dependencies": {
+    "@fontsource-variable/heebo": "5.3.0",
+    "@fontsource-variable/inter": "5.3.0",
+    "better-sqlite3": "13.0.3",
+    "clsx": "2.1.1",
+    "i18next": "26.5.11",
+    "lucide-react": "1.61.0",
+    "motion": "14.6.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-i18next": "17.1.9",
+    "tailwind-merge": "3.7.0",
+    "zustand": "5.0.16"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "4.2.1",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "electron": "44.9.3",
+    "electron-builder": "26.18.0",
+    "electron-vite": "6.0.0",
+    "playwright": "1.64.1",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vite": "8.3.5"
+  }
+}

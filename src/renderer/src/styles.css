@@ -1,0 +1,189 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/heebo';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #faf9f7;
+  --panel: #ffffff;
+  --panel-2: #f4f3f0;
+  --sidebar: rgba(246, 245, 242, 0.72);
+  --line: rgba(23, 23, 26, 0.08);
+  --line-strong: rgba(23, 23, 26, 0.14);
+  --ink: #17171a;
+  --ink-2: #5b5b64;
+  --ink-3: #8d8d96;
+  --accent: #5b5bd6;
+  --accent-ink: #4343b8;
+  --accent-soft: rgba(91, 91, 214, 0.1);
+  --rec: #f0564a;
+  --rec-soft: rgba(240, 86, 74, 0.12);
+  --ok: #2f9e6e;
+  --ok-soft: rgba(47, 158, 110, 0.12);
+  --warn: #c98a12;
+  --shadow: 0 1px 2px rgba(16, 16, 20, 0.04), 0 8px 24px rgba(16, 16, 20, 0.06);
+  --glass: rgba(255, 255, 255, 0.78);
+}
+
+.dark {
+  --bg: #111113;
+  --panel: #18181b;
+  --panel-2: #1f1f23;
+  --sidebar: rgba(24, 24, 27, 0.6);
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.13);
+  --ink: #ededf0;
+  --ink-2: #a5a5ae;
+  --ink-3: #74747d;
+  --accent: #8b8bf5;
+  --accent-ink: #a5a5ff;
+  --accent-soft: rgba(139, 139, 245, 0.14);
+  --rec: #ff6b5f;
+  --rec-soft: rgba(255, 107, 95, 0.16);
+  --ok: #45c08a;
+  --ok-soft: rgba(69, 192, 138, 0.14);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px rgba(0, 0, 0, 0.35);
+  --glass: rgba(28, 28, 32, 0.78);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-rec: var(--rec);
+  --color-rec-soft: var(--rec-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --font-sans: 'Inter Variable', 'Heebo Variable', -apple-system, system-ui, sans-serif;
+  --shadow-card: var(--shadow);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--ink);
+  background: transparent;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'cv11', 'ss01';
+  user-select: none;
+  cursor: default;
+}
+
+.selectable,
+.selectable * {
+  user-select: text;
+  cursor: text;
+}
+
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag,
+button,
+input,
+textarea,
+select,
+a {
+  -webkit-app-region: no-drag;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Transcript text: each line picks its own direction (Hebrew, English or mixed). */
+.bidi {
+  unicode-bidi: plaintext;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 99px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+mark {
+  background: rgba(255, 199, 0, 0.35);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+@keyframes pulse-rec {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(240, 86, 74, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(240, 86, 74, 0);
+  }
+}
+.rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+  background: var(--rec);
+  animation: pulse-rec 1.6s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.shimmer {
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.55) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+@keyframes typing {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+.typing span {
+  animation: typing 1.2s infinite;
+  display: inline-block;
+}
+.typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
