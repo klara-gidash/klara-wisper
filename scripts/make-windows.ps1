@@ -41,7 +41,7 @@ npx electron-vite build
 if ($LASTEXITCODE -ne 0) { throw 'electron-vite build failed' }
 $env:KLARA_NO_ENGINE_PATH = '1'
 $out = Join-Path $Root 'dist\windows'
-npx electron-builder --config electron-builder.config.cjs --win --x64 "-c.directories.output=$out"
+npx electron-builder --config electron-builder.config.cjs --win --x64 "-c.directories.output=$out" --publish never
 if ($LASTEXITCODE -ne 0) { throw 'electron-builder failed' }
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Root 'release') | Out-Null

@@ -36,7 +36,7 @@ npx electron-vite build
 export KLARA_NO_ENGINE_PATH=1  # never point the colleagues' build at this checkout
 OUT="$ROOT/dist/colleagues"
 rm -rf "$OUT"
-npx electron-builder --config electron-builder.config.cjs --mac --arm64 -c.directories.output="$OUT"
+npx electron-builder --config electron-builder.config.cjs --mac --arm64 -c.directories.output="$OUT" --publish never
 APP="$OUT/mac-arm64/Klara Wisper.app"
 
 # 3. signatures, inside out: uv, the helper (its own entitlements), then the app around them
@@ -65,7 +65,13 @@ ln -s /Applications "$STAGE/Applications"
 mkdir -p "$ROOT/release"  # not dist/: scripts/dist.sh deletes that folder
 DMG="$ROOT/release/Klara Wisper.dmg"
 rm -f "$DMG"
-hdiutil create -quiet -volname "Klara Wisper" -srcfolder "$STAGE" -fs APFS -format ULFO "$DMG"
+# hdiutil sometimes fails with "Resource busy" (common on CI machines): try a few times, and show why.
+for attempt in 1 2 3 4; do
+  if hdiutil create -volname "Klara Wisper" -srcfolder "$STAGE" -fs APFS -format ULFO "$DMG"; then break; fi
+  [ "$attempt" = 4 ] && { echo "ERROR: hdiutil could not create the disk image" >&2; exit 1; }
+  echo "hdiutil failed (attempt $attempt), retrying in 10 s" >&2
+  rm -f "$DMG"; sleep 10
+done
 # Build copies share the installed app's identity: keep them away from Launch Services and Spotlight.
 LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 for stale in "$APP" "$HELPER_OUT"; do "$LSREG" -u "$stale" 2>/dev/null || true; done
