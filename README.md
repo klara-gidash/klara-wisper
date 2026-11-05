@@ -12,6 +12,8 @@
 - **סיכום אוטומטי:** דקה-שתיים אחרי כל שיחה של 3 דקות ומעלה, Claude כותב סיכום ושומר אותו ליד התמלול. שיחה שאין לה אירוע ביומן (שיחה מזדמנת או פנים מול פנים) מקבלת ממנו גם שם, משתתפים ונושא.
 - **היומן:** כל שיחה מותאמת לאירוע ביומן, כולל שיחות ישנות, ומקבלת את השם והמשתתפים שלו.
 
+**English: install, build (Mac + Windows), how to test →** [docs/BUILD-AND-TEST.md](docs/BUILD-AND-TEST.md)
+
 **אתר הפרויקט:** https://klara-gidash.github.io/klara-wisper/ · **הורדה:** [Releases](https://github.com/klara-gidash/klara-wisper/releases/latest) · **מדריך התקנה:** [docs/INSTALL.he.md](docs/INSTALL.he.md) · **Claude מהטלפון (רשות):** [docs/CLOUDFLARE.he.md](docs/CLOUDFLARE.he.md). הסקילים ל-Claude נמצאים ב-[skills/](skills/), ויש להם גם מאגר נפרד, [klara-wisper-skills](https://github.com/klara-gidash/klara-wisper-skills).
 
 ## מודלים (הכל רץ מקומית)

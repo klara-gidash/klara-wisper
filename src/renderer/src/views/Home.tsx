@@ -11,7 +11,15 @@ import { Button, cn } from '../components/ui'
 import { invoke, setSettings, useAppState, useEvent } from '../lib/api'
 import { dayKey, dayLabel, groupByDay, initials, locale, timeHM } from '../lib/format'
 
-const PAGE_DAYS = 7
+// One day at a time: today (what's left of it), then tomorrow and on with the arrows.
+const PAGE_DAYS = 1
+
+/** "Thursday, 12 November" for pages after tomorrow. */
+function dayTitle(offset: number, lang: 'he' | 'en'): string {
+  const d = new Date()
+  d.setDate(d.getDate() + offset)
+  return d.toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
+}
 
 /** "Anna & Alon", "Basman, Melanie & Yael": the guests (or named speakers) of a meeting. */
 function people(m: MeetingSummary, lang: 'he' | 'en'): string {
@@ -150,7 +158,9 @@ export function Home({ onOpen, go, onSearch }: { onOpen: (id: string) => void; g
 
       {/* coming up */}
       <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="mt-6 flex items-end justify-between">
-        <h1 className="text-[30px] font-semibold tracking-[-0.02em]">{t('home.upcoming')}</h1>
+        <h1 className="text-[30px] font-semibold tracking-[-0.02em]">
+          {page === 0 ? t('home.today') : page === 1 ? t('home.tomorrow') : dayTitle(page, lang)}
+        </h1>
         {calendarGranted && (
           <div className="relative flex items-center gap-1 pb-1.5">
             <button onClick={() => setPicking(!picking)} className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-[12.5px] text-ink-2 hover:bg-line">
@@ -178,8 +188,9 @@ export function Home({ onOpen, go, onSearch }: { onOpen: (id: string) => void; g
             <button disabled={page === 0} onClick={() => setPage(page - 1)} className="grid size-7 place-items-center rounded-lg text-ink-2 hover:bg-line disabled:opacity-30" aria-label={t('home.earlier')}>
               <Prev size={17} />
             </button>
-            <button onClick={() => setPage(page + 1)} className="grid size-7 place-items-center rounded-lg text-ink-2 hover:bg-line" aria-label={t('home.later')}>
-              <Next size={17} />
+            <button onClick={() => setPage(page + 1)} className="flex h-7 items-center gap-1 rounded-lg px-2 text-[12.5px] font-medium text-ink-2 hover:bg-line" aria-label={t('home.later')}>
+              {page === 0 ? t('home.tomorrow') : t('home.nextDay')}
+              <Next size={16} />
             </button>
           </div>
         )}

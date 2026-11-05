@@ -64,6 +64,7 @@ module.exports = {
     extraResources: [
       { from: 'build/win-helper', to: 'helper', filter: ['**/*'] },
       engineSource,
+      { from: 'skills', to: 'skills', filter: ['*/SKILL.md'] },
       { from: 'build/uv-win/uv.exe', to: 'bin/uv.exe' },
       { from: 'resources', to: '.', filter: ['tray*.png'] }
     ]
