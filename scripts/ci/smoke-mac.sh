@@ -1,5 +1,5 @@
 #!/bin/bash
-# Smoke test of the macOS disk image on a CI machine (GitHub Actions macos-14, Apple Silicon):
+# Smoke test of the macOS disk image on a CI machine (GitHub Actions macos-15, Apple Silicon):
 #   1. mounts release/Klara Wisper.dmg, checks the app's signature and that its Electron fuses are
 #      locked (RunAsNode disabled),
 #   2. copies the app to /Applications and marks onboarding as done, so the first launch runs the

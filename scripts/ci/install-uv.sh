@@ -1,5 +1,5 @@
 #!/bin/bash
-# Installs uv on a CI machine (GitHub Actions macos-14, Apple Silicon): the same pinned version and
+# Installs uv on a CI machine (GitHub Actions macos-15, Apple Silicon): the same pinned version and
 # SHA-256 as the app build, read from scripts/make-dmg.sh so there is one pin to update.
 # Puts uv on PATH for the next steps ($GITHUB_PATH). Usage: bash scripts/ci/install-uv.sh
 set -euo pipefail
