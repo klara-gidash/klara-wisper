@@ -12,6 +12,7 @@ import { helper } from './helper'
 import { appState, pushState, refreshPermissions, registerIpc } from './ipc'
 import { Detector, needsConfirmation } from './meetings/detector'
 import { recorder } from './meetings/recorder'
+import { CallController } from './meetings/calls'
 import { dataDir } from './paths'
 import { explainMicDenied, isMicDenied } from './micPermission'
 import { recoverInterrupted } from './recovery'
@@ -109,68 +110,59 @@ function registerMedia(): void {
 
 const detector = new Detector((source) => settings.value.detect[source as keyof typeof settings.value.detect] ?? true)
 
-detector.on('start', async (cand) => {
-  console.log(`call detected: ${cand.key} (${cand.appName})`)
-  const live = recorder.live
-  if (live && live.phase === 'recording') {
-    const sameCall = recorder.detectorKey === cand.key || recorder.detectorKey?.split(':')[1] === cand.source
-    if (sameCall || !recorder.detectorKey) {
-      // Same call again (unmuted, rejoined), or a recording started by hand: keep this recording.
-      recorder.cancelAutoStop(sameCall ? 'the call is using the microphone again' : `adopted ${cand.key}`)
-      detector.claim(cand.key)
-      recorder.detectorKey = cand.key
-      return
-    }
-    if (!recorder.winding) {
-      // Another call while this one is still going: try again in a moment.
-      detector.release(cand.key)
-      return
-    }
-    // The previous call already ended (we were only waiting for its audio to go quiet): close it now.
-    console.log(`recording ${live.id}: closing it, a new call started`)
-    await recorder.stop()
-  }
-  const he = settings.value.uiLanguage === 'he'
-  // Known call apps (incl. Slack huddles and Aircall, which the detector only reports after the mic
-  // was held without a break for a few seconds) record by themselves; a browser on the mic with
-  // no meeting tab we recognise asks first.
-  const sure = !needsConfirmation(cand)
-  if (!settings.value.autoRecord || !sure) {
+const calls = new CallController({
+  recorder: {
+    get live() {
+      return recorder.live
+    },
+    get detectorKey() {
+      return recorder.detectorKey
+    },
+    set detectorKey(k: string | null) {
+      recorder.detectorKey = k
+    },
+    get winding() {
+      return recorder.winding
+    },
+    get busyStopping() {
+      return recorder.busyStopping
+    },
+    idle: () => recorder.idle(),
+    start: (c) =>
+      recorder.start({ mode: 'meeting', source: c.source, title: c.title, appName: c.appName, url: c.url, micUids: c.micUids, detectorKey: c.key }),
+    stop: () => recorder.stop(),
+    cancelAutoStop: (reason) => recorder.cancelAutoStop(reason),
+    requestAutoStop: (reason) => recorder.requestAutoStop(reason)
+  },
+  detector,
+  engineReady: () => engine.status.state === 'ready',
+  autoRecord: () => settings.value.autoRecord,
+  needsConfirmation,
+  askToRecord: (cand, record) => {
+    const he = settings.value.uiLanguage === 'he'
     const n = new Notification({
       title: he ? `שיחה ב-${cand.appName}` : `Call in ${cand.appName}`,
       body: he ? 'ללחוץ כדי להקליט ולתמלל' : 'Click to record and transcribe',
       silent: true
     })
-    n.on('click', () => void recorder.start({ mode: 'meeting', ...cand, detectorKey: cand.key }).catch(() => undefined))
+    n.on('click', record)
     n.show()
-    return
-  }
-  if (engine.status.state !== 'ready') {
-    detector.release(cand.key) // the engine is still starting up: retry shortly
-    return
-  }
-  try {
-    await recorder.start({ mode: 'meeting', source: cand.source, title: cand.title, appName: cand.appName, url: cand.url, micUids: cand.micUids, detectorKey: cand.key })
+  },
+  recording: (cand) => {
+    const he = settings.value.uiLanguage === 'he'
     new Notification({
       title: he ? `מקליטה את השיחה ב-${cand.appName}` : `Recording your ${cand.appName} call`,
       body: he ? 'התמלול מופיע בפאנל. אפשר לעצור בכל רגע.' : 'The transcript shows in the panel. Stop any time.',
       silent: true
     }).show()
-  } catch (err) {
-    console.error('auto-record failed', err)
-    if (isMicDenied(err)) {
-      detector.dismiss(cand.key)
-      void explainMicDenied()
-    } else {
-      detector.release(cand.key)
-    }
-  }
+  },
+  micDenied: (err) => isMicDenied(err),
+  explainMicDenied: () => void explainMicDenied(),
+  log: (msg) => console.log(msg),
+  now: () => Date.now()
 })
-
-detector.on('end', (key) => {
-  console.log(`call released the microphone: ${key}`)
-  if (recorder.live && recorder.detectorKey === key) recorder.requestAutoStop('the call app released the microphone')
-})
+detector.on('start', (cand) => void calls.onStart(cand).catch((err) => console.error('call start failed', err)))
+detector.on('end', (key) => calls.onEnd(key))
 
 async function configureHelper(): Promise<void> {
   try {
@@ -224,6 +216,9 @@ app.whenReady().then(async () => {
   let micHolders = new Set<string>()
   helper.on('micUsers', (m) => {
     detector.update(m.users ?? [], m.tabs ?? {})
+    // The recording follows the microphone the call app is using right now.
+    const call = recorder.detectorKey ? detector.candidate(recorder.detectorKey) : null
+    if (call?.micUids?.length) audio.updateAppMics(call.micUids)
     // Log who takes and releases the microphone (helps tell when an app is really in a call).
     const now = new Set<string>((m.users ?? []).map((u: any) => u.bundleID || u.name).filter(Boolean))
     for (const id of now) if (!micHolders.has(id)) console.log(`microphone taken by ${id}`)
@@ -243,6 +238,19 @@ app.whenReady().then(async () => {
     }
   })
   engine.start()
+  // Watchdog: an engine that isn't ready (or not reachable) for 5 minutes is restarted, never
+  // during a call or while a finished call is still being saved (restartEngineWhenIdle waits).
+  let unhealthySince: number | null = null
+  setInterval(() => {
+    const healthy = engine.status.state === 'ready' && engine.connected
+    if (healthy || setup.state.running) return void (unhealthySince = null)
+    unhealthySince ??= Date.now()
+    if (Date.now() - unhealthySince >= 5 * 60_000) {
+      console.warn(`engine not ready for 5 min (${engine.status.state}), restarting it`)
+      unhealthySince = null
+      restartEngineWhenIdle()
+    }
+  }, 30_000)
 
   // First launch of an installed app: onboarding starts the setup (engine + models) and shows
   // its progress. After an update that needs a new engine, it runs by itself.
@@ -271,24 +279,27 @@ app.whenReady().then(async () => {
     console.warn('could not register', TOGGLE_SHORTCUT)
   }
   // Claude Desktop sometimes rewrites its config without our entry; put the connection back so
-  // Claude can always read the calls (a dated copy of the old file is kept).
-  void claude
-    .status()
-    .then(async (s) => {
-      if (s.desktopInstalled && !s.desktop) {
-        claude.connectDesktop()
-        console.log('Claude Desktop: the Klara Wisper connection was missing, added it back')
-      }
-      // Claude Code too (the CLI, or the copy inside Claude Desktop), with the skills, so Claude
-      // can use the calls before, during and after them without any setup.
-      if (s.codeCli && !s.code) {
-        await claude.connectCode()
-        console.log('Claude Code: connected Klara Wisper (MCP)')
-      }
-      const skills = claude.installSkills()
-      if (skills.length) console.log(`Claude Code skills installed/updated: ${skills.join(', ')}`)
-    })
-    .catch((err) => console.warn('Claude connection check failed', err))
+  // Claude can always read the calls (a dated copy of the old file is kept). Only while the
+  // claudeConnected setting is on: when it is off, nothing is added back or installed.
+  if (settings.value.claudeConnected) {
+    void claude
+      .status()
+      .then(async (s) => {
+        if (s.desktopInstalled && !s.desktop) {
+          claude.connectDesktop()
+          console.log('Claude Desktop: the Klara Wisper connection was missing, added it back')
+        }
+        // Claude Code too (the CLI, or the copy inside Claude Desktop), with the skills, so Claude
+        // can use the calls before, during and after them without any setup.
+        if (s.codeCli && !s.code) {
+          await claude.connectCode()
+          console.log('Claude Code: connected Klara Wisper (MCP)')
+        }
+        const skills = claude.installSkills()
+        if (skills.length) console.log(`Claude Code skills installed/updated: ${skills.join(', ')}`)
+      })
+      .catch((err) => console.warn('Claude connection check failed', err))
+  }
   createTray()
   pillWindow()
   if (!app.getLoginItemSettings().wasOpenedAtLogin || !settings.value.onboarded) {

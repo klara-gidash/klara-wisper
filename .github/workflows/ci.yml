@@ -1,0 +1,69 @@
+# Checks every push and pull request to main: type checks, unit tests, the Cloudflare Worker's tests,
+# the engine's Python syntax, and the engine's fast tests (no models, no GPU). No secrets, read-only token.
+# The installers are built and smoke-tested by installers.yml (tags and manual runs).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      # --ignore-scripts: no electron-rebuild of better-sqlite3 and no Electron download. The type
+      # checks and the tests below don't load either.
+      - name: Install packages
+        run: npm ci --ignore-scripts
+      - name: Type check (main, preload, shared)
+        run: npx tsc --noEmit -p tsconfig.node.json
+      - name: Type check (renderer)
+        run: npx tsc --noEmit -p tsconfig.web.json
+      - name: Detector tests
+        run: npm run test:detector
+      - name: Unit tests (every test/*.test.mts)
+        run: node --test test/*.test.mts
+      - name: Cloudflare Worker tests
+        run: node --test cloudflare/test/
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Engine compiles (Python 3.12)
+        run: python -m py_compile engine/klara_engine/*.py
+
+  engine-fast:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install uv (pinned, checksum-verified)
+        run: bash scripts/ci/install-uv.sh
+      - name: Install the engine's locked packages
+        working-directory: engine
+        run: uv sync --locked
+      # echo_score is pure Python; "rejects" starts the real engine server and checks that a wrong
+      # token or a web page's Origin is refused. Neither needs a model: KLARA_MODELS_DIR is empty, so
+      # Whisper is never loaded (the server reports the missing model and keeps serving).
+      - name: Fast engine tests (no models)
+        working-directory: engine
+        env:
+          KLARA_MODELS_DIR: ${{ runner.temp }}/no-models
+        run: uv run --locked pytest -k "echo_score or rejects" -x

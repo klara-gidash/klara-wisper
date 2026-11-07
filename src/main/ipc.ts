@@ -17,7 +17,8 @@ import { isAppUrl, safeExternal } from './security'
 import { settings } from './settings'
 import { setup } from './setup'
 import { asrChoices, selectAsr, selectLanguage } from './models'
-import { checkCloud, cloudState, configureCloud, forgetCloud, syncAllCloud } from './cloud'
+import { checkCloud, cloudState, configureCloud, deleteCloud, forgetCloud, syncAllCloud } from './cloud'
+import { disableObsidian, enableObsidian, exportAllObsidian, obsidianState, pickObsidianVault } from './obsidian'
 import { autoSummary } from './summarize'
 import { db } from './storage/db'
 import { readMeeting, renameMeetingFolder, writeMeeting, writeMeta } from './storage/files'
@@ -36,7 +37,7 @@ export function cacheUpcoming(events: CalendarEvent[]): void {
 
 const EDITABLE: (keyof Settings)[] = [
   'uiLanguage', 'theme', 'userName', 'hotkey', 'autoRecord', 'detect', 'micUid', 'vocabulary',
-  'keepAudio', 'diarizeRemote', 'restoreClipboard', 'launchAtLogin', 'onboarded', 'calendars', 'autoSummary'
+  'keepAudio', 'diarizeRemote', 'restoreClipboard', 'launchAtLogin', 'onboarded', 'calendars', 'autoSummary', 'claudePush', 'claudeConnected'
 ]
 
 /** Settings the pages may change; the folder only changes through the folder picker. */
@@ -46,6 +47,10 @@ function cleanPatch(patch: Partial<Settings>): Partial<Settings> {
     if (!(key in patch)) continue
     const value = patch[key]
     const kind = typeof settings.value[key]
+    if (key === 'claudePush') {
+      if (value === 'off' || value === 'notify' || value === 'open') out.claudePush = value
+      continue
+    }
     if (key === 'calendars') {
       if (value === null || Array.isArray(value)) out.calendars = value === null ? null : (value as unknown[]).filter((v): v is string => typeof v === 'string').slice(0, 50)
       continue
@@ -232,6 +237,10 @@ export function registerIpc(detector: Detector): void {
     await shell.trashItem(folder)
     db().removeMeeting(id)
     broadcast('meetings:changed', id)
+    // The cloud copy goes too, in the background (the local delete never waits for it).
+    if (settings.value.cloudSync) {
+      void deleteCloud(id).catch((err) => console.warn(`cloud sync: could not delete ${id} from the Worker: ${(err as Error).message}`))
+    }
   })
   handle('meetings:reveal', (id: string) => shell.showItemInFolder(join(meetingFolder(id), 'transcript.md')))
   handle('meetings:copy', (id: string) => {
@@ -357,6 +366,12 @@ export function registerIpc(detector: Detector): void {
   handle('cloud:check', () => checkCloud())
   handle('cloud:syncAll', () => syncAllCloud())
   handle('cloud:forget', () => forgetCloud())
+  // Optional Obsidian export: one note per call in the vault the user picks.
+  handle('obsidian:state', () => obsidianState())
+  handle('obsidian:pickVault', () => pickObsidianVault())
+  handle('obsidian:enable', () => enableObsidian())
+  handle('obsidian:disable', () => disableObsidian())
+  handle('obsidian:exportAll', () => exportAllObsidian())
   handle('claude:status', () => claude.status())
   // The automatic summaries need the Claude Code CLI signed in (Settings > Claude).
   handle('claude:auth', async () => {
@@ -387,6 +402,8 @@ export function registerIpc(detector: Detector): void {
     } else {
       await claude.connectCode()
     }
+    // Connected on purpose: from now on the app may restore the connection at startup (index.ts).
+    if (!settings.value.claudeConnected) settings.update({ claudeConnected: true })
     return claude.status()
   })
 

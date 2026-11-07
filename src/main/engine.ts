@@ -52,7 +52,8 @@ export class Engine extends EventEmitter {
         ...(asrChoice() ? { KLARA_ASR_MODEL: asrChoice()! } : {}), // Settings > transcription model
         KLARA_ASR_LANGUAGE: settings.value.asrLanguage === 'auto' ? 'auto' : 'he'
       },
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true
     })
     this.proc = proc
     proc.stdin!.write(token + '\n') // the token never appears in the environment
@@ -135,6 +136,11 @@ export class Engine extends EventEmitter {
       }
     }
     ws.onerror = () => undefined
+  }
+
+  /** The app is talking to the engine right now (the WebSocket is open). */
+  get connected(): boolean {
+    return this.ws !== null
   }
 
   private setStatus(s: EngineStatus): void {

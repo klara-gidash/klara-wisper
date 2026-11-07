@@ -276,6 +276,16 @@ class Recorder extends EventEmitter {
     this.emit('state', this.live)
   }
 
+  /** A recording is being closed right now (a second or two: mic released, files closed). */
+  get busyStopping(): boolean {
+    return this.stopping !== null
+  }
+
+  /** Resolves once a recording being closed has handed off to the finalizer. */
+  async idle(): Promise<void> {
+    await this.stopping?.catch(() => undefined)
+  }
+
   stop(): Promise<void> {
     if (!this.live) return Promise.resolve()
     if (!this.stopping) this.stopping = this.finish().finally(() => (this.stopping = null))

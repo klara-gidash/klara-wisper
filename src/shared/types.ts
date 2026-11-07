@@ -1,6 +1,9 @@
 export type Lang = 'he' | 'en'
 export type Stream = 'mic' | 'system'
-export type MeetingSource = 'zoom' | 'meet' | 'teams' | 'slack' | 'facetime' | 'webex' | 'aircall' | 'inperson' | 'other'
+export type MeetingSource =
+  | 'zoom' | 'meet' | 'teams' | 'slack' | 'facetime' | 'webex' | 'aircall'
+  | 'whatsapp' | 'telegram' | 'discord' | 'signal' | 'messenger' | 'goto'
+  | 'inperson' | 'other'
 export type RecordingMode = 'meeting' | 'inperson'
 export type HotkeyName = 'fn' | 'rightOption' | 'rightCommand' | 'rightControl'
 
@@ -144,6 +147,15 @@ export interface Settings {
   /** Optional: copy transcripts + summaries to the user's own Cloudflare Worker (phone connector). */
   cloudSync: boolean
   cloudUrl: string
+  /** Optional: one Markdown note per call in an Obsidian vault (folder picked in Settings). */
+  obsidianEnabled: boolean
+  obsidianVault: string
+  /** Optional: after a call, open the summary in Claude ("notify": a notification to click; "open": by itself). */
+  claudePush: 'off' | 'notify' | 'open'
+  /** Keep the klara-wisper connection in Claude Desktop / Claude Code (re-added at launch only when true). */
+  claudeConnected: boolean
+  /** The microphone the last automatic scan picked (kept across restarts). */
+  lastScanMic: string | null
 }
 
 export interface MicDevice {
@@ -227,6 +239,12 @@ export const SOURCE_LABEL: Record<MeetingSource, string> = {
   facetime: 'FaceTime',
   webex: 'Webex',
   aircall: 'Aircall',
+  whatsapp: 'WhatsApp',
+  telegram: 'Telegram',
+  discord: 'Discord',
+  signal: 'Signal',
+  messenger: 'Messenger',
+  goto: 'GoTo',
   inperson: 'In person',
   other: 'Call'
 }

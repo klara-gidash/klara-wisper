@@ -13,6 +13,8 @@ private var childPID: pid_t = 0
 enum Disclaim {
     static func reexecIfNeeded() {
         let env = ProcessInfo.processInfo.environment
+        // KLARA_DISCLAIMED only marks the re-launched copy so it doesn't re-launch again; it grants nothing.
+        // Release builds verify that copy's parent (this helper) and grandparent (Klara Wisper) in main.swift.
         guard env["KLARA_DISCLAIMED"] == nil, env["KLARA_NO_DISCLAIM"] == nil else { return }
         guard let path = Bundle.main.executablePath else { return }
 

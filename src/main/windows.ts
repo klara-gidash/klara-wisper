@@ -23,6 +23,7 @@ const webPreferences = (): Electron.WebPreferences => ({
  * Electron app to "accessory" mode — no Dock icon. Klara Wisper is a regular app, so switch back.
  */
 export function keepInDock(): void {
+  if (process.platform !== 'darwin') return // macOS only (on Windows this would throw at startup)
   app.setActivationPolicy('regular')
   void app.dock?.show()
 }

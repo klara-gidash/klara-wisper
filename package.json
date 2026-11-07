@@ -1,7 +1,7 @@
 {
   "name": "klara-wisper",
   "productName": "Klara Wisper",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local meeting transcription and dictation (Whisper large-v3 + Nemotron diarization)",
   "author": "Klara Gidash",
   "license": "MIT",
@@ -12,6 +12,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "node --test test/*.test.mts",
     "test:detector": "node --test test/detector.test.mts",
     "build:helper": "bash scripts/build-helper.sh",
     "rebuild": "electron-rebuild -f -w better-sqlite3",

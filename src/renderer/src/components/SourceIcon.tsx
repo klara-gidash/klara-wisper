@@ -10,6 +10,12 @@ const STYLE: Record<MeetingSource, { bg: string; fg: string; Icon: typeof Video 
   facetime: { bg: '#E7F6EA', fg: '#1F9D45', Icon: Video },
   webex: { bg: '#E6F3F8', fg: '#0A7EA4', Icon: Video },
   aircall: { bg: '#E3F7EF', fg: '#0B8A5A', Icon: Phone },
+  whatsapp: { bg: '#E4F7E9', fg: '#128C4A', Icon: Phone },
+  telegram: { bg: '#E5F3FB', fg: '#1C83C2', Icon: Phone },
+  discord: { bg: '#ECEDFB', fg: '#5865D2', Icon: Headphones },
+  signal: { bg: '#E8EEFB', fg: '#3463D6', Icon: Phone },
+  messenger: { bg: '#EAF0FF', fg: '#2F5FE0', Icon: MessageSquare },
+  goto: { bg: '#FFF1E6', fg: '#C25A00', Icon: Video },
   inperson: { bg: '#FFF2DF', fg: '#B86E00', Icon: Users },
   other: { bg: '#EFEFF1', fg: '#5B5B64', Icon: Phone }
 }

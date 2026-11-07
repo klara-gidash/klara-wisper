@@ -14,11 +14,14 @@ guard command == "serve" else {
     FileHandle.standardError.write(Data("KlaraHelper: only `serve` is available\n".utf8))
     exit(2)
 }
-if ProcessInfo.processInfo.environment["KLARA_DISCLAIMED"] == nil {
-    guard ParentCheck.launchedByKlaraWisper() else {
-        FileHandle.standardError.write(Data("KlaraHelper: must be started by Klara Wisper\n".utf8))
-        exit(77)
-    }
+// The re-launched copy (KLARA_DISCLAIMED, see Disclaim.swift) is checked too: any process can set the
+// variable, so that copy must be a child of this same helper executable, whose parent is Klara Wisper.
+let parentVerified = ProcessInfo.processInfo.environment["KLARA_DISCLAIMED"] == nil
+    ? ParentCheck.launchedByKlaraWisper()
+    : ParentCheck.relaunchedByVerifiedHelper()
+guard parentVerified else {
+    FileHandle.standardError.write(Data("KlaraHelper: must be started by Klara Wisper\n".utf8))
+    exit(77)
 }
 #endif
 

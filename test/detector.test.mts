@@ -251,7 +251,7 @@ for (const url of ['https://teams.microsoft.com/v2/', 'https://teams.live.com/v2
 test('Slack huddle in the browser: records by itself after 8 s held', () => {
   const { cand } = callCycle({
     bundles: ['com.google.Chrome.helper'],
-    tabs: { 'com.google.Chrome': [{ url: 'https://app.slack.com/client/T0123/C0456', title: 'general (Channel) - Visitt - Slack' }] },
+    tabs: { 'com.google.Chrome': [{ url: 'https://app.slack.com/client/T0123/C0456', title: 'general (Channel) - Acme - Slack' }] },
     key: 'web:slack:slack',
     source: 'slack',
     startWithinMs: [8000, 9000]
@@ -403,4 +403,163 @@ test('claim(): a recording started by hand for the current call is not announced
   h.mic([])
   h.wait(16_000)
   assert.deepEqual(h.ends().map((e) => e.key), ['app:zoom'])
+})
+
+// ---------------------------------------------------------------- chat apps, more sites, unknown apps
+
+test('WhatsApp desktop (net.whatsapp.WhatsApp): records after 10 s (voice messages are shorter)', () => {
+  const { cand } = callCycle({ bundles: ['net.whatsapp.WhatsApp'], key: 'app:whatsapp', source: 'whatsapp', startWithinMs: [10_000, 11_000] })
+  assert.equal(needsConfirmation(cand), false)
+})
+
+test('a short WhatsApp voice message (6 s) is not a call', () => {
+  const h = harness()
+  h.mic(['net.whatsapp.WhatsApp'])
+  h.wait(6_000)
+  h.mic([])
+  h.wait(60_000)
+  assert.equal(h.starts().length, 0)
+})
+
+test('WhatsApp Web in Chrome records by itself', () => {
+  callCycle({
+    bundles: ['com.google.Chrome.helper'],
+    tabs: { 'com.google.Chrome': [{ url: 'https://web.whatsapp.com/', title: 'WhatsApp' }] },
+    key: 'web:whatsapp:whatsapp',
+    source: 'whatsapp',
+    startWithinMs: [10_000, 11_000]
+  })
+})
+
+for (const [bundle, source] of [
+  ['ru.keepcoder.Telegram', 'telegram'],
+  ['org.telegram.desktop', 'telegram'],
+  ['com.hnc.Discord.helper', 'discord'],
+  ['org.whispersystems.signal-desktop.helper', 'signal'],
+  ['com.facebook.archon', 'messenger'],
+  ['com.logmein.goto', 'goto']
+] as const) {
+  test(`${source} desktop (${bundle}) records by itself`, () => {
+    const after = source === 'goto' ? [3000, 4000] : [10_000, 11_000]
+    callCycle({ bundles: [bundle], key: `app:${source}`, source, startWithinMs: after as [number, number] })
+  })
+}
+
+for (const [url, source, key] of [
+  ['https://web.telegram.org/a/', 'telegram', 'web:telegram:telegram'],
+  ['https://discord.com/channels/123/456', 'discord', 'web:discord:discord'],
+  ['https://www.messenger.com/t/123', 'messenger', 'web:messenger:messenger'],
+  ['https://acme.webex.com/meet/someone', 'webex', 'web:webex:acme.webex.com'],
+  ['https://app.goto.com/meeting/123456789', 'goto', 'web:goto:https://app.goto.com/meeting/123456789'],
+  ['https://us02web.zoom.us/s/81234567890', 'zoom', 'web:zoom:zoom.us/wc/81234567890']
+] as const) {
+  test(`${source} in the browser (${url}) records by itself`, () => {
+    const chat = ['telegram', 'discord', 'messenger'].includes(source)
+    callCycle({
+      bundles: ['com.google.Chrome.helper'],
+      tabs: { 'com.google.Chrome': [{ url, title: 'x' }] },
+      key,
+      source,
+      startWithinMs: chat ? [10_000, 11_000] : [3000, 4000]
+    })
+  })
+}
+
+test('Meet inside Gmail (the title shows the meeting code) counts as Meet', () => {
+  callCycle({
+    bundles: ['com.google.Chrome.helper'],
+    tabs: { 'com.google.Chrome': [{ url: 'https://mail.google.com/mail/u/0/#inbox', title: 'Meet - abc-defg-hij - Gmail' }] },
+    key: 'web:meet:gmail',
+    source: 'meet',
+    startWithinMs: [3000, 4000]
+  })
+})
+
+test('Gmail without a meeting code in the title is not a Meet call', () => {
+  const h = harness()
+  h.mic(['com.google.Chrome.helper'], { 'com.google.Chrome': [{ url: 'https://mail.google.com/mail/u/0/#inbox', title: 'Inbox (3) - Gmail' }] })
+  h.wait(20_000)
+  const s = h.starts()
+  assert.equal(s.length, 1)
+  assert.equal(s[0].key, 'web:unknown:Chrome')
+})
+
+test('Firefox on the mic (tabs unreadable) asks first after 15 s', () => {
+  const h = harness()
+  h.mic(['org.mozilla.firefox'])
+  h.wait(16_000)
+  const s = h.starts()
+  assert.equal(s.length, 1)
+  assert.equal(s[0].key, 'web:unknown:Firefox')
+  assert.equal(needsConfirmation(s[0].cand), true)
+})
+
+test('an unknown desktop app on the mic is announced after 15 s ("click to record")', () => {
+  const h = harness()
+  h.mic(['com.example.softphone'])
+  h.wait(14_000)
+  assert.equal(h.starts().length, 0)
+  h.wait(2_000)
+  const s = h.starts()
+  assert.equal(s.length, 1)
+  assert.equal(s[0].key, 'app:unknown:com.example.softphone')
+  assert.equal(needsConfirmation(s[0].cand), true)
+})
+
+test('a parked unknown call does not block a known call that starts meanwhile', () => {
+  const h = harness()
+  h.mic(['com.example.softphone'])
+  h.wait(16_000)
+  assert.equal(h.starts()[0].key, 'app:unknown:com.example.softphone')
+  h.d.park('app:unknown:com.example.softphone')
+  h.mic(['com.example.softphone', 'us.zoom.xos'])
+  h.wait(5_000)
+  const keys = h.starts().map((s) => s.key)
+  assert.deepEqual(keys, ['app:unknown:com.example.softphone', 'app:zoom'])
+})
+
+test('Meet A then Meet B in the same browser: A ends at once, B starts', () => {
+  const h = harness()
+  const tabA = { 'com.google.Chrome': [{ url: 'https://meet.google.com/aaa-bbbb-ccc', title: 'Meet - A' }] }
+  const tabB = { 'com.google.Chrome': [{ url: 'https://meet.google.com/ddd-eeee-fff', title: 'Meet - B' }] }
+  h.mic(['com.google.Chrome.helper'], tabA)
+  h.wait(10_000)
+  h.mic(['com.google.Chrome.helper'], tabB)
+  h.wait(2_000)
+  assert.deepEqual(h.ends().map((e) => e.key), ['web:meet:https://meet.google.com/aaa-bbbb-ccc'])
+  h.wait(5_000)
+  assert.deepEqual(h.starts().map((s) => s.key), ['web:meet:https://meet.google.com/aaa-bbbb-ccc', 'web:meet:https://meet.google.com/ddd-eeee-fff'])
+})
+
+// ---------------------------------------------------------------- Windows inputs
+
+for (const [bundle, source] of [
+  ['zoom.exe', 'zoom'],
+  ['ms-teams.exe', 'teams'],
+  ['5319275a.whatsappdesktop_cv1g1gvanyjgm', 'whatsapp'],
+  ['91750d7e.slack_8she8kybcnzg4', 'slack'],
+  ['discord.exe', 'discord']
+] as const) {
+  test(`Windows: ${bundle} → ${source}`, () => {
+    const h = harness()
+    h.mic([bundle])
+    h.wait(12_000)
+    const s = h.starts()
+    assert.equal(s.length, 1)
+    assert.equal(s[0].key, `app:${source}`)
+  })
+}
+
+test('Windows: a Meet window title in Chrome counts as Meet', () => {
+  const h = harness()
+  h.mic(['chrome.exe'], { 'chrome.exe': [{ url: '', title: 'Meet - abc-defg-hij - Google Chrome' }] })
+  h.wait(4_000)
+  assert.equal(h.starts()[0]?.source, 'meet')
+})
+
+test('dictation and voice apps (Superwhisper, Wispr, Siri, Voice Memos, QuickTime) are never announced', () => {
+  const h = harness()
+  h.mic(['com.superduper.superwhisper', 'com.electron.wispr-flow', 'com.apple.siri.helper', 'com.apple.VoiceMemos', 'com.apple.QuickTimePlayerX', 'com.openai.chat'])
+  h.wait(60_000)
+  assert.deepEqual(h.events, [])
 })

@@ -66,7 +66,7 @@ export function writeMeeting(folder: string, meta: MeetingMeta, segments: Segmen
   const m = { ...meta, folder }
   writeAtomic(join(folder, 'meta.json'), JSON.stringify(m, null, 2))
   writeAtomic(join(folder, 'transcript.json'), JSON.stringify({ version: 1, meta: m, segments }, null, 1))
-  writeAtomic(join(folder, 'transcript.md'), toMarkdown(m, segments, settings.value.userName))
+  writeAtomic(join(folder, 'transcript.md'), toMarkdown(m, segments, settings.value.userName, { frontMatter: true }))
 }
 
 export function writeMeta(folder: string, meta: MeetingMeta): void {

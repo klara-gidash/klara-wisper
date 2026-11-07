@@ -1,5 +1,6 @@
 import type { MeetingMeta, Segment, SpeakerInfo } from './types'
 import { SOURCE_LABEL } from './types'
+import { meetingFrontMatter } from './notes'
 
 export function speakerName(
   label: string | null | undefined,
@@ -63,11 +64,16 @@ export function paragraphs(segments: Segment[], maxGap = 20): { speaker: string 
   return out
 }
 
-export function toMarkdown(meta: MeetingMeta, segments: Segment[], userName = ''): string {
+/**
+ * The transcript as Markdown. `frontMatter: true` (transcript.md on disk) starts it with YAML
+ * properties for Obsidian and other tools; the clipboard copy and the Cloudflare upload leave it out.
+ */
+export function toMarkdown(meta: MeetingMeta, segments: Segment[], userName = '', opts: { frontMatter?: boolean } = {}): string {
   const ui = 'he'
   const date = new Date(meta.startedAt)
   const when = date.toLocaleString('he-IL', { dateStyle: 'full', timeStyle: 'short' })
   const lines = [`# ${meta.title}`, '', `${when} · ${SOURCE_LABEL[meta.source]} · ${fmtDuration(meta.durationSec, ui)}`]
+  if (opts.frontMatter) lines.unshift(meetingFrontMatter(meta))
   const attendees = (meta.attendees ?? []).map((a) => a.name || a.email).filter(Boolean)
   if (attendees.length) lines.push(`משתתפים: ${attendees.join(', ')}`)
   lines.push('')

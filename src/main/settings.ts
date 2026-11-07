@@ -12,9 +12,12 @@ export const defaults: Settings = {
   userName: '',
   hotkey: process.platform === 'win32' ? 'rightControl' : 'fn', // no fn key events on Windows
   autoRecord: true,
-  detect: { zoom: true, meet: true, teams: true, slack: true, facetime: true, webex: true, aircall: true },
+  detect: {
+    zoom: true, meet: true, teams: true, slack: true, facetime: true, webex: true, aircall: true,
+    whatsapp: true, telegram: true, discord: true, signal: true, messenger: true, goto: true
+  },
   micUid: null,
-  vocabulary: ['Visitt'],
+  vocabulary: [],
   folder: defaultFolder,
   keepAudio: true,
   diarizeRemote: true,
@@ -25,6 +28,11 @@ export const defaults: Settings = {
   asrLanguage: 'he',
   cloudSync: false,
   cloudUrl: '',
+  obsidianEnabled: false,
+  obsidianVault: '',
+  claudePush: 'off',
+  claudeConnected: true,
+  lastScanMic: null,
   launchAtLogin: false,
   onboarded: false
 }

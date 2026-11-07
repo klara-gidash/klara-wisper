@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { Notification } from 'electron'
 import { claudeCli, mcpEntry, signedIn } from './claude'
+import { pushToClaude } from './claudePush'
 import { dataDir, enginePython } from './paths'
 import { settings } from './settings'
 import { db } from './storage/db'
@@ -18,6 +19,17 @@ const TIMEOUT_MS = 8 * 60_000
 
 /** The only things the automatic Claude may do: read the transcript, save its notes, name an ad-hoc call. */
 const ALLOWED = ['mcp__klara-wisper__get_transcript', 'mcp__klara-wisper__save_meeting_notes', 'mcp__klara-wisper__set_meeting_details']
+/** Denied outright (the MCP server refuses them too, see KLARA_MCP_ONLY): the rest of the library, dictations, calendar. */
+const DISALLOWED = ['list_meetings', 'search_transcripts', 'list_dictations', 'list_upcoming_meetings', 'set_speaker_name']
+  .map((t) => `mcp__klara-wisper__${t}`)
+/** The only variables the CLI gets from the app's environment: nothing ANTHROPIC_* or CLAUDE_*. */
+const CLI_ENV = ['HOME', 'USER', 'LOGNAME', 'PATH', 'LANG', 'TMPDIR', 'SHELL']
+
+function cliEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const key of CLI_ENV) if (process.env[key]) env[key] = process.env[key]
+  return env
+}
 
 /**
  * The summary prompt comes from the engine's MCP server (summarize_meeting), the same text Claude
@@ -61,7 +73,10 @@ class AutoSummary {
   })()
 
   enqueue(id: string): void {
-    if (!settings.value.autoSummary || process.platform !== 'darwin' || this.queued.has(id)) return
+    // Automatic summaries off (or not available: they run on the Mac): the optional push still offers
+    // to open Claude and summarize there.
+    if (!settings.value.autoSummary || process.platform !== 'darwin') return void pushToClaude(id, { summarize: true, isBusy: () => this.isBusy() })
+    if (this.queued.has(id)) return
     this.queued.add(id)
     this.chain = this.chain
       .then(() => this.run(id))
@@ -109,18 +124,21 @@ class AutoSummary {
     if (!cli || !(await signedIn(cli))) {
       console.log(`auto-summary ${id}: skipped, ${cli ? 'Claude Code is not signed in' : 'no Claude Code CLI'}`)
       this.warnOnce(!cli)
+      void pushToClaude(m.meta, { summarize: true, isBusy: () => this.isBusy() }) // no summary coming: offer Claude to write one
       return
     }
 
     const he = settings.value.uiLanguage === 'he'
     const cwd = join(dataDir, 'claude-run') // empty: no project CLAUDE.md or settings get picked up
     mkdirSync(cwd, { recursive: true })
-    const config = JSON.stringify({ mcpServers: { 'klara-wisper': { type: 'stdio', ...mcpEntry() } } })
+    // KLARA_MCP_ONLY: the MCP server only serves this one meeting (no other ids, no "latest"/"live").
+    const config = JSON.stringify({ mcpServers: { 'klara-wisper': { type: 'stdio', ...mcpEntry(), env: { KLARA_MCP_ONLY: id } } } })
     const args = [
       '-p',
       '--strict-mcp-config', '--mcp-config', config,
       '--tools', '',
       '--allowedTools', ALLOWED.join(','),
+      '--disallowedTools', DISALLOWED.join(','),
       '--permission-mode', 'dontAsk',
       '--permission-prompts', 'none',
       '--no-session-persistence',
@@ -133,17 +151,17 @@ class AutoSummary {
     this.markTried(id)
     const t0 = Date.now()
     console.log(`auto-summary ${id}: asking Claude`)
-    const result = await new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
-      const child = spawn(cli, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+    const result = await new Promise<{ code: number | null; out: string; spawnError?: string }>((resolve) => {
+      // stderr is dropped: it can quote the transcript, and it is never logged.
+      const child = spawn(cli, args, { cwd, env: cliEnv(), stdio: ['pipe', 'pipe', 'ignore'] })
       let out = ''
-      let err = ''
+      let spawnError: string | undefined
       const timer = setTimeout(() => child.kill('SIGTERM'), TIMEOUT_MS)
       child.stdout.on('data', (d) => (out = (out + d).slice(-64_000)))
-      child.stderr.on('data', (d) => (err = (err + d).slice(-8_000)))
-      child.on('error', (e) => (err += String(e)))
+      child.on('error', (e: NodeJS.ErrnoException) => (spawnError = e.code ?? e.name))
       child.on('close', (code) => {
         clearTimeout(timer)
-        resolve({ code, out, err })
+        resolve({ code, out, spawnError })
       })
       child.stdin.end(text) // the prompt goes in on stdin: no quoting, no argument-length limits
     })
@@ -151,19 +169,27 @@ class AutoSummary {
     const latest = db().getFolder(id) ?? folder // the folder may have been renamed meanwhile
     if (existsSync(join(latest, 'summary.md'))) {
       console.log(`auto-summary ${id}: saved after ${secs}s`)
+      void pushToClaude(m.meta, { isBusy: () => this.isBusy() }) // optional: open the summary in Claude
       broadcast('meetings:changed', id)
-      const n = new Notification({ title: he ? 'הסיכום מוכן' : 'Summary ready', body: m.meta.title, silent: true })
-      n.on('click', () => showLibrary(`meeting/${id}`))
-      n.show()
+      // With push to Claude on, its own notification ("open in Claude") replaces this one.
+      if (settings.value.claudePush === 'off') {
+        const n = new Notification({ title: he ? 'הסיכום מוכן' : 'Summary ready', body: m.meta.title, silent: true })
+        n.on('click', () => showLibrary(`meeting/${id}`))
+        n.show()
+      }
     } else {
-      let detail = result.err.trim()
+      // Only the outcome, never Claude's reply: it can quote the transcript.
+      let subtype = '-'
+      let isError = '-'
       try {
         const j = JSON.parse(result.out)
-        detail = [j.subtype, j.is_error ? 'error' : '', String(j.result ?? '').slice(0, 300)].filter(Boolean).join(' · ') || detail
+        subtype = String(j?.subtype ?? '-').replace(/[^\w-]/g, '').slice(0, 40) || '-'
+        isError = String(j?.is_error === true)
       } catch {
         /* not JSON */
       }
-      console.warn(`auto-summary ${id}: no summary after ${secs}s (exit ${result.code}) ${detail.slice(0, 600)}`)
+      const spawnError = result.spawnError ? `, spawn ${result.spawnError.replace(/[^\w-]/g, '').slice(0, 40)}` : ''
+      console.warn(`auto-summary ${id}: no summary after ${secs}s (exit ${result.code}, subtype ${subtype}, is_error ${isError}${spawnError})`)
     }
   }
 

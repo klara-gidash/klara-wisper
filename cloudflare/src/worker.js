@@ -1,9 +1,12 @@
 // Klara Wisper Cloud gateway: an optional Cloudflare Worker that each user deploys to their own account.
 //
 // The Klara Wisper app uploads call transcripts and summaries (never audio) to /api/meetings, and Claude
-// (claude.ai and the Claude mobile app) reads them through a remote MCP connector at /mcp/<KLARA_TOKEN>.
+// (claude.ai and the Claude mobile app) reads them through a read-only remote MCP connector at
+// /mcp/<KLARA_MCP_TOKEN>.
 //
-// Bindings: DB (D1, see ../schema.sql) and the secret KLARA_TOKEN (at least 32 characters).
+// Bindings: DB (D1, see ../schema.sql) and two different secrets, each at least 32 characters:
+// KLARA_TOKEN, the upload token (Authorization: Bearer, /api only; it never leaves the Mac), and
+// KLARA_MCP_TOKEN, the read-only connector token that goes in the connector URL (/mcp only).
 // No dependencies, only Workers runtime APIs. Never logs transcript or summary content.
 
 const VERSION = "1.0.0";
@@ -113,8 +116,9 @@ async function route(request, env) {
 
 // ---------- auth ----------
 
-function configuredToken(env) {
-  const t = typeof env.KLARA_TOKEN === "string" ? env.KLARA_TOKEN.trim() : "";
+/** A secret of at least 32 characters, or null. KLARA_TOKEN uploads (/api); KLARA_MCP_TOKEN only reads (/mcp). */
+function configuredToken(env, name = "KLARA_TOKEN") {
+  const t = typeof env[name] === "string" ? env[name].trim() : "";
   return t.length >= MIN_TOKEN_LENGTH ? t : null;
 }
 
@@ -243,9 +247,16 @@ function validateMeeting(b) {
 
 async function mcpRoute(request, env, rest) {
   const segment = rest.endsWith("/") ? rest.slice(0, -1) : rest;
-  const expected = configuredToken(env);
+  // The connector has its own read-only token; the upload token (KLARA_TOKEN) never works here.
+  const expected = configuredToken(env, "KLARA_MCP_TOKEN");
+  if (!expected) {
+    return json({ ok: false, error: "KLARA_MCP_TOKEN is not set on the Worker or is shorter than 32 characters" }, 401);
+  }
+  if (expected === configuredToken(env, "KLARA_TOKEN")) {
+    return json({ ok: false, error: "KLARA_MCP_TOKEN must be different from KLARA_TOKEN" }, 401);
+  }
   // Wrong or missing token: the same 404 as any unknown path, so the endpoint's existence isn't revealed.
-  if (!expected || !segment || segment.includes("/")) return notFound();
+  if (!segment || segment.includes("/")) return notFound();
   if (!(await sameToken(decodeSegment(segment), expected))) return notFound();
   if (request.method !== "POST") return methodNotAllowed("POST");
 

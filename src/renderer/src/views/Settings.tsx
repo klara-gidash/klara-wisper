@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { HotkeyName, MeetingSource, Settings as SettingsT } from '@shared/types'
 import { SOURCE_LABEL } from '@shared/types'
+import { IntegrationsSection } from '../components/IntegrationsSection'
 import { PermissionList } from '../components/Permissions'
 import { SetupProgress } from '../components/SetupProgress'
 import { Button, Card, cn, Segmented, Spinner, Toggle } from '../components/ui'
@@ -216,7 +217,9 @@ export function Settings() {
     }
   }
 
-  const sources: Exclude<MeetingSource, 'inperson' | 'other'>[] = ['zoom', 'meet', 'teams', 'slack', 'facetime', 'webex', 'aircall']
+  const sources: Exclude<MeetingSource, 'inperson' | 'other'>[] = [
+    'zoom', 'meet', 'teams', 'slack', 'facetime', 'webex', 'aircall', 'whatsapp', 'telegram', 'discord', 'signal', 'messenger', 'goto'
+  ]
   const physical = app.mic.devices.filter((d) => !d.virtual)
 
   return (
@@ -420,6 +423,10 @@ export function Settings() {
           <CloudSection />
         </Section>
       )}
+
+      <Section title={t('set.integrations')}>
+        <IntegrationsSection />
+      </Section>
 
       <Section title={t('set.permissions')}>
         <div className="p-3">

@@ -1,8 +1,12 @@
-# Builds the installers on GitHub's machines and attaches them to a release:
-#   macOS (Apple Silicon): release/Klara Wisper.dmg       (scripts/make-dmg.sh)
-#   Windows 10/11 x64:     release/Klara Wisper Setup.exe (scripts/make-windows.ps1)
+# Builds the installers on GitHub's machines, installs and starts each one (smoke test), and attaches
+# them to a release:
+#   macOS (Apple Silicon): release/Klara Wisper.dmg       (scripts/make-dmg.sh, then scripts/ci/smoke-mac.sh)
+#   Windows 10/11 x64:     release/Klara Wisper Setup.exe (scripts/make-windows.ps1, then scripts/ci/smoke-windows.ps1)
 # Runs when a tag like v0.1.1 is pushed, or by hand: Actions → "Build installers" → Run workflow.
 # No secrets are used: the builds are unsigned (ad-hoc on the Mac), see docs/INSTALL.he.md.
+# Least privilege: the build jobs can only read the repo and keep their installer as a workflow
+# artifact. Only the last job ("release") may write, and it runs only when every build that ran
+# also passed its smoke test.
 name: Build installers
 
 on:
@@ -24,56 +28,105 @@ on:
         default: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   windows:
     if: github.event_name == 'push' || inputs.windows
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 100
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
       - name: Build the installer
         shell: pwsh
         run: powershell -ExecutionPolicy Bypass -File scripts\make-windows.ps1
-      - uses: actions/upload-artifact@v4
+      # Silent install, first-run setup (Python, packages, models), engine process, uninstall.
+      # A failure here fails the job, so the installer is not kept and the release job does not run.
+      - name: Smoke test the installer
+        continue-on-error: false
+        timeout-minutes: 45
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\ci\smoke-windows.ps1
+      - uses: actions/upload-artifact@v6
         with:
           name: Klara-Wisper-Windows
           path: release/Klara Wisper Setup.exe
-      - name: Attach to the release
-        if: github.event_name == 'push' || inputs.release != ''
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.release }}
-        run: gh release upload "$env:TAG" "release/Klara Wisper Setup.exe" --clobber --repo "${{ github.repository }}"
+          if-no-files-found: error
 
   mac:
     if: github.event_name == 'push' || inputs.mac
     runs-on: macos-14
-    timeout-minutes: 60
+    timeout-minutes: 100
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
       - name: Install packages
         run: npm ci
       - name: Build the dmg
         run: bash scripts/make-dmg.sh
-      - uses: actions/upload-artifact@v4
+      # Signature and Electron fuses of the app in the dmg, then a first launch from /Applications:
+      # setup (Python, packages, models) and the engine process. Transcription itself is not tested
+      # (GitHub's macOS VMs may have no Metal GPU for MLX).
+      # A failure here fails the job, so the dmg is not kept and the release job does not run.
+      - name: Smoke test the dmg
+        continue-on-error: false
+        timeout-minutes: 45
+        run: bash scripts/ci/smoke-mac.sh
+      - uses: actions/upload-artifact@v6
         with:
           name: Klara-Wisper-macOS
           path: release/Klara Wisper.dmg
-      - name: Attach to the release
-        if: github.event_name == 'push' || inputs.release != ''
+          if-no-files-found: error
+
+  release:
+    name: Attach to the release
+    needs: [windows, mac]
+    # Only for a tag push or a manual run with a release tag, and only when every build that ran
+    # succeeded, smoke test included. A failed or cancelled build or smoke test means nothing is
+    # uploaded, not even the installer of the other platform. A platform switched off in a manual
+    # run (its job is "skipped") does not block the other one.
+    # (!cancelled() lets this job decide for itself when a build was skipped; the result checks
+    # below then require success.)
+    if: >-
+      (github.event_name == 'push' || inputs.release != '')
+      && !cancelled()
+      && (needs.windows.result == 'success' || needs.windows.result == 'skipped')
+      && (needs.mac.result == 'success' || needs.mac.result == 'skipped')
+      && (needs.windows.result == 'success' || needs.mac.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: Klara-Wisper-*
+          merge-multiple: true
+          path: release
+      - name: Upload to the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.release }}
-        run: gh release upload "$TAG" "release/Klara Wisper.dmg" --clobber --repo "${{ github.repository }}"
+        run: |
+          shopt -s nullglob
+          files=(release/*)
+          [ -n "$TAG" ] || { echo "::error::no release tag"; exit 1; }
+          [ ${#files[@]} -gt 0 ] || { echo "::error::no installers were downloaded"; exit 1; }
+          ls -l "${files[@]}"
+          # A new tag has no release yet: create it (the notes point to the install guide), then attach.
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "Klara Wisper ${TAG#v}" \
+              --notes "Installers for macOS (Apple Silicon) and Windows 10/11. Install guide: https://github.com/$GITHUB_REPOSITORY/blob/main/docs/INSTALL.he.md · Build & test: https://github.com/$GITHUB_REPOSITORY/blob/main/docs/BUILD-AND-TEST.md"
+          gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"

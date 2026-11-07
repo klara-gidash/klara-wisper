@@ -1,6 +1,7 @@
 import { mkdirSync, watch, type FSWatcher } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { queueCloud } from './cloud'
+import { queueObsidian } from './obsidian'
 import { recorder } from './meetings/recorder'
 import { settings } from './settings'
 import { db } from './storage/db'
@@ -22,11 +23,11 @@ export function watchLibrary(): void {
     watcher = watch(root, { recursive: true }, onChange)
     watcher.on('error', (err) => {
       console.warn('library watch stopped, retrying', String(err))
-      setTimeout(watchLibrary, 60_000)
+      setTimeout(watchLibrary, 5_000)
     })
   } catch (err) {
     console.warn('library watch failed, retrying', String(err))
-    setTimeout(watchLibrary, 60_000)
+    setTimeout(watchLibrary, 5_000)
   }
 }
 
@@ -44,6 +45,7 @@ function onChange(_event: string, filename: string | null): void {
       db().indexMeeting({ ...m.meta, folder }, m.segments)
       broadcast('meetings:changed', m.meta.id)
       queueCloud(m.meta.id) // optional Cloudflare copy: saved, summarized or renamed
+      queueObsidian(m.meta.id) // optional note in the user's Obsidian vault
     }, 600)
   )
 }

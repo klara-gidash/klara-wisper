@@ -28,7 +28,7 @@ export class Helper extends EventEmitter {
       return
     }
     this.stopping = false
-    const proc = spawn(bin, ['serve'], { stdio: 'pipe' })
+    const proc = spawn(bin, ['serve'], { stdio: 'pipe', windowsHide: true })
     this.proc = proc
     createInterface({ input: proc.stdout }).on('line', (line) => this.onLine(line))
     proc.stderr.on('data', (d) => process.stderr.write(`[helper] ${d}`))

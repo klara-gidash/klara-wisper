@@ -45,6 +45,7 @@ class Audio extends EventEmitter {
       uid: d.uid, name: d.name, transport: d.transport, virtual: d.virtual, isDefault: d.isDefault
     }))
     this.defaultUid = snap.defaultInput
+    if (!this.scanWinner && settings.value.lastScanMic) this.scanWinner = settings.value.lastScanMic
     if (this.scanWinner && !this.devices.some((d) => d.uid === this.scanWinner)) this.scanWinner = null
     this.emit('devices')
     if (this.micUsers.size > 0) void this.followDevice(before)
@@ -85,8 +86,37 @@ class Audio extends EventEmitter {
     return this.defaultUid
   }
 
+  /**
+   * The call app's microphone right now (from the helper's "who uses the mic" reports). When the
+   * call app moves to another input mid-call (a headset picked in Zoom, AirPods connected), the
+   * recording follows it. Automatic mode only: a microphone chosen in Settings always wins.
+   */
+  updateAppMics(uids: string[]): void {
+    const fresh = uids.filter((u) => this.devices.some((d) => d.uid === u && !d.virtual))
+    if (!fresh.length || fresh.join() === this.appMics.join()) return
+    this.appMics = fresh
+    if (!this.micUsers.has('meeting') || settings.value.micUid) return
+    const want = this.pick(fresh)
+    if (!want || want === this.current?.uid) return
+    void helper
+      .request('startMic', { uid: want }, 120_000)
+      .then((r) => {
+        this.current = this.devices.find((d) => d.uid === r.device?.uid) ?? this.current
+        console.log(`mic switched to "${this.current?.name}" (the call app moved to it)`)
+        this.emit('devices')
+      })
+      .catch((err) => console.error('mic switch failed:', String((err as Error)?.message ?? err)))
+  }
+
   async acquireMic(user: string, appMics: string[] = []): Promise<void> {
     const first = this.micUsers.size === 0
+    // No hint from the call app (Windows, an unknown app) and several real microphones: listen to
+    // all of them for a moment before the call opens one (once; the winner is remembered).
+    const real = this.devices.filter((d) => !d.virtual)
+    if (first && user === 'meeting' && !appMics.length && !settings.value.micUid && !this.scanWinner && real.length >= 2) {
+      await this.scan(2000).catch(() => undefined)
+      if (this.scanWinner) settings.update({ lastScanMic: this.scanWinner })
+    }
     this.micUsers.add(user)
     if (appMics.length) this.appMics = appMics
     if (!first) return

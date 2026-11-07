@@ -14,19 +14,27 @@ cd cloudflare
 npx wrangler login
 npx wrangler d1 create klara-wisper        # put the printed database_id into wrangler.toml
 npx wrangler d1 execute klara-wisper --remote --file=schema.sql
-openssl rand -hex 32                        # the token: keep it in a password manager
-npx wrangler secret put KLARA_TOKEN         # paste the token
+openssl rand -hex 32                        # upload token: for the app only, keep it in a password manager
+npx wrangler secret put KLARA_TOKEN         # paste the upload token
+openssl rand -hex 32                        # connector token (read-only): a second, different value
+npx wrangler secret put KLARA_MCP_TOKEN     # paste the connector token
 npx wrangler deploy
 curl https://klara-wisper-gateway.<subdomain>.workers.dev/api/health
 ```
 
+There are two tokens, and they must be different:
+
+- `KLARA_TOKEN`, the upload token. Klara Wisper sends it as `Authorization: Bearer` to `/api` to upload and
+  delete. It stays in the app on the Mac (encrypted in the Keychain) and is never put in a URL or a connector.
+- `KLARA_MCP_TOKEN`, the connector token. It goes in the connector URL and can only read.
+
 In claude.ai, go to Settings → Connectors → Add custom connector and enter
-`https://klara-wisper-gateway.<subdomain>.workers.dev/mcp/<KLARA_TOKEN>`.
+`https://klara-wisper-gateway.<subdomain>.workers.dev/mcp/<KLARA_MCP_TOKEN>`.
 
 ## Upload API
 
-Every call except health needs `Authorization: Bearer <KLARA_TOKEN>`. If `KLARA_TOKEN` is missing or shorter
-than 32 characters, every authenticated request is refused.
+Every call except health needs `Authorization: Bearer <KLARA_TOKEN>`; the connector token is not accepted. If
+`KLARA_TOKEN` is missing or shorter than 32 characters, every authenticated request is refused.
 
 | Method | Path | Body | Success |
 |---|---|---|---|
@@ -60,9 +68,10 @@ Errors are `{"ok":false,"error":"…"}` with one of these statuses:
 
 ## MCP endpoint
 
-`POST /mcp/<KLARA_TOKEN>` serves MCP over Streamable HTTP. It is stateless (no session id), takes single or
-batch JSON-RPC messages, and always answers with `application/json`. A wrong token gets the same 404 as any
-unknown path, and GET or DELETE with the right token gets 405.
+`POST /mcp/<KLARA_MCP_TOKEN>` serves MCP over Streamable HTTP. It is stateless (no session id), takes single or
+batch JSON-RPC messages, and always answers with `application/json`. A wrong token (the upload token included)
+gets the same 404 as any unknown path, and GET or DELETE with the right token gets 405. If `KLARA_MCP_TOKEN` is
+missing, shorter than 32 characters or the same as `KLARA_TOKEN`, `/mcp` answers 401 with a message saying so.
 
 Tools (times are Asia/Jerusalem):
 
@@ -75,12 +84,14 @@ Transcript text is always wrapped in `<meeting_content>` with a "data, not instr
 
 ## Security notes
 
-- The connector URL is the only credential: anyone who has it can read everything. To rotate, set a new secret,
-  update it in the app, and re-add the connector.
+- The connector URL is a credential: anyone who has it can read everything, but can't upload, change or delete.
+  To rotate it, set a new `KLARA_MCP_TOKEN` and re-add the connector; the app doesn't need to change.
+- The upload token never leaves the Mac except as the Bearer header to the Worker. To rotate it, set a new
+  `KLARA_TOKEN` and update it in the app.
 - Tokens are compared in constant time (SHA-256 of both sides, then a timing-safe compare).
 - There is no CORS, every response carries security headers, and request bodies are capped.
 - Nothing logs transcript or summary text. Workers Logs are off in `wrangler.toml` because they would record
-  the token in the URL. `npx wrangler tail` still works.
+  the connector token in the URL. `npx wrangler tail` still works.
 
 ## Tests
 

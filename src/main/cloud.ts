@@ -72,7 +72,8 @@ async function call(method: string, path: string, body?: unknown): Promise<Respo
     method,
     headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000)
+    signal: AbortSignal.timeout(30_000),
+    redirect: 'error' // never resend a transcript to a redirected (possibly http) address
   })
 }
 
@@ -130,6 +131,19 @@ export function queueCloud(id: string): void {
       lastError = (err as Error).message
       console.warn(`cloud sync: ${lastError}`) // no transcript content in the log
     })
+}
+
+/**
+ * Removes a deleted meeting's copy from the Worker. Queued after any upload already under way, so
+ * that upload can't put the meeting back. Rejects on failure; the caller logs it.
+ */
+export function deleteCloud(id: string): Promise<void> {
+  const done = chain.then(async () => {
+    const r = await call('DELETE', `/api/meetings/${encodeURIComponent(id)}`)
+    if (!r.ok) throw new Error(`the Worker answered ${r.status}`)
+  })
+  chain = done.catch(() => undefined)
+  return done
 }
 
 /** "Sync all calls": every finished call, oldest first. */

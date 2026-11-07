@@ -30,6 +30,16 @@ const APPS: { prefix: string; source: MeetingSource; name: string }[] = [
   { prefix: 'com.cisco.webexmeetingsapp', source: 'webex', name: 'Webex' },
   { prefix: 'Cisco-Systems.Spark', source: 'webex', name: 'Webex' },
   { prefix: 'io.aircall.workspace', source: 'aircall', name: 'Aircall' },
+  // Chat apps with calls (a voice message also takes the mic: see CHAT_AFTER_MS).
+  { prefix: 'net.whatsapp.WhatsApp', source: 'whatsapp', name: 'WhatsApp' },
+  { prefix: 'desktop.WhatsApp', source: 'whatsapp', name: 'WhatsApp' },
+  { prefix: 'ru.keepcoder.Telegram', source: 'telegram', name: 'Telegram' },
+  { prefix: 'org.telegram.desktop', source: 'telegram', name: 'Telegram' },
+  { prefix: 'com.hnc.Discord', source: 'discord', name: 'Discord' },
+  { prefix: 'org.whispersystems.signal-desktop', source: 'signal', name: 'Signal' },
+  { prefix: 'com.facebook.archon', source: 'messenger', name: 'Messenger' },
+  { prefix: 'com.logmein.goto', source: 'goto', name: 'GoTo' },
+  { prefix: 'com.logmein.GoToMeeting', source: 'goto', name: 'GoTo Meeting' },
   // Windows: the helper reports the executable name (lower case) or the Store package family name.
   { prefix: 'zoom.exe', source: 'zoom', name: 'Zoom' },
   { prefix: 'ms-teams.exe', source: 'teams', name: 'Microsoft Teams' },
@@ -38,7 +48,38 @@ const APPS: { prefix: string; source: MeetingSource; name: string }[] = [
   { prefix: 'slack.exe', source: 'slack', name: 'Slack' },
   { prefix: 'webex.exe', source: 'webex', name: 'Webex' },
   { prefix: 'ciscocollabhost.exe', source: 'webex', name: 'Webex' },
-  { prefix: 'aircall', source: 'aircall', name: 'Aircall' }
+  { prefix: 'aircall', source: 'aircall', name: 'Aircall' },
+  { prefix: '91750d7e.slack_', source: 'slack', name: 'Slack' }, // Slack from the Microsoft Store
+  { prefix: '5319275a.whatsappdesktop', source: 'whatsapp', name: 'WhatsApp' }, // WhatsApp (Store package)
+  { prefix: 'whatsapp.exe', source: 'whatsapp', name: 'WhatsApp' },
+  { prefix: 'whatsapp.root.exe', source: 'whatsapp', name: 'WhatsApp' },
+  { prefix: 'telegrammessengerllp.telegramdesktop', source: 'telegram', name: 'Telegram' },
+  { prefix: 'telegram.exe', source: 'telegram', name: 'Telegram' },
+  { prefix: 'discord.exe', source: 'discord', name: 'Discord' },
+  { prefix: 'signal.exe', source: 'signal', name: 'Signal' },
+  { prefix: 'facebook.317180b0bb486', source: 'messenger', name: 'Messenger' }, // Messenger (Store package)
+  { prefix: 'messenger.exe', source: 'messenger', name: 'Messenger' },
+  { prefix: 'goto.exe', source: 'goto', name: 'GoTo' },
+  { prefix: 'g2mcomm.exe', source: 'goto', name: 'GoTo Meeting' }
+]
+
+/**
+ * Apps that use the microphone for something other than a call (dictation, voice assistants,
+ * recorders, Claude's own voice mode): never announced. Everything else that holds the mic and
+ * isn't a known call app or browser is announced as an unknown call ("click to record").
+ */
+const NOT_CALLS = [
+  'io.klara', 'klarahelper', 'klara wisper',
+  'com.apple.corespeech', 'com.apple.siri', 'com.apple.speech', 'com.apple.dictation', 'com.apple.assistant',
+  'com.apple.voiceover', 'com.apple.accessibility', 'com.apple.quicktimeplayerx', 'com.apple.voicememos',
+  'com.apple.photobooth', 'com.apple.controlcenter', 'com.apple.screencapture', 'com.apple.garageband',
+  'com.apple.logic', 'com.apple.findmy', 'com.apple.audio', 'com.apple.coreaudio',
+  'com.anthropic.claude', 'com.openai.chat', 'com.granola', 'com.anysphere', 'com.todesktop',
+  'com.superduper.superwhisper', 'com.electron.wispr', 'flow.wispr', 'com.wisprflow', 'com.raycast',
+  'com.obsproject', 'com.loom', 'com.descript', 'com.krisp', 'com.voicemod',
+  // Windows
+  'searchhost.exe', 'cortana', 'microsoft.windows.cortana', 'microsoft.windowssoundrecorder', 'soundrec',
+  'claude.exe', 'chatgpt', 'obs64.exe', 'obs32.exe', 'krisp.exe', 'voicemod.exe', 'audiodg.exe'
 ]
 
 const BROWSERS: { prefix: string; name: string; tabsKey: string[] }[] = [
@@ -49,6 +90,14 @@ const BROWSERS: { prefix: string; name: string; tabsKey: string[] }[] = [
   { prefix: 'com.vivaldi.Vivaldi', name: 'Vivaldi', tabsKey: ['com.vivaldi.Vivaldi'] },
   { prefix: 'com.apple.Safari', name: 'Safari', tabsKey: ['com.apple.Safari', 'com.apple.SafariTechnologyPreview'] },
   { prefix: 'com.apple.WebKit', name: 'Safari', tabsKey: ['com.apple.Safari', 'com.apple.SafariTechnologyPreview'] },
+  { prefix: 'com.operasoftware.Opera', name: 'Opera', tabsKey: ['com.operasoftware.Opera'] },
+  { prefix: 'company.thebrowser.dia', name: 'Dia', tabsKey: ['company.thebrowser.dia'] },
+  { prefix: 'org.chromium.Chromium', name: 'Chromium', tabsKey: ['org.chromium.Chromium'] },
+  // No AppleScript tab access: a call in these always shows as "a call in <browser>" (click to record).
+  { prefix: 'org.mozilla.firefox', name: 'Firefox', tabsKey: [] },
+  { prefix: 'org.mozilla.plugincontainer', name: 'Firefox', tabsKey: [] },
+  { prefix: 'app.zen-browser.zen', name: 'Zen', tabsKey: [] },
+  { prefix: 'com.kagi.kagimacOS', name: 'Orion', tabsKey: ['com.kagi.kagimacOS'] },
   // Windows: tabs are the browser's window titles (the active tab of each window).
   { prefix: 'chrome.exe', name: 'Chrome', tabsKey: ['chrome.exe'] },
   { prefix: 'msedge.exe', name: 'Edge', tabsKey: ['msedge.exe'] },
@@ -56,7 +105,8 @@ const BROWSERS: { prefix: string; name: string; tabsKey: string[] }[] = [
   { prefix: 'firefox.exe', name: 'Firefox', tabsKey: ['firefox.exe'] },
   { prefix: 'vivaldi.exe', name: 'Vivaldi', tabsKey: ['vivaldi.exe'] },
   { prefix: 'opera.exe', name: 'Opera', tabsKey: ['opera.exe'] },
-  { prefix: 'arc.exe', name: 'Arc', tabsKey: ['arc.exe'] }
+  { prefix: 'arc.exe', name: 'Arc', tabsKey: ['arc.exe'] },
+  { prefix: 'zen.exe', name: 'Zen', tabsKey: ['zen.exe'] }
 ]
 
 /**
@@ -67,7 +117,12 @@ const WEB_TITLES: { re: RegExp; source: MeetingSource; clean: (t: string) => str
   { re: /^Meet\s*[-–—:]\s*[a-z]{3}-[a-z]{4}-[a-z]{3}\b|\bGoogle Meet\b/i, source: 'meet', clean: (t) => t.replace(/^Meet\s*[-–—:]\s*/i, '').replace(/\s*[-–—]\s*Google Meet$/i, '') },
   { re: /\|\s*Microsoft Teams\b/i, source: 'teams', clean: (t) => t.replace(/\s*\|\s*Microsoft Teams.*$/i, '') },
   { re: /\bZoom (Meeting|Workplace|Webinar)\b/i, source: 'zoom', clean: () => '' },
-  { re: /\bHuddle\b.*\bSlack\b|\bSlack\b.*\bHuddle\b/i, source: 'slack', clean: () => '' }
+  { re: /\bHuddle\b.*\bSlack\b|\bSlack\b.*\bHuddle\b/i, source: 'slack', clean: () => '' },
+  { re: /^\(?\d*\)?\s*WhatsApp\b/i, source: 'whatsapp', clean: () => '' },
+  { re: /\bDiscord\b/i, source: 'discord', clean: () => '' },
+  { re: /\bTelegram\b/i, source: 'telegram', clean: () => '' },
+  { re: /\bMessenger\b/i, source: 'messenger', clean: () => '' },
+  { re: /\bWebex\b/i, source: 'webex', clean: () => '' }
 ]
 const BROWSER_SUFFIX = /\s*[-–—]\s*(Google Chrome|Microsoft Edge|Brave|Mozilla Firefox|Vivaldi|Opera|Arc)$/i
 
@@ -87,15 +142,20 @@ const WEB: { re: RegExp; source: MeetingSource; id: (url: string) => string; cle
   },
   {
     // Zoom web client: app.zoom.us/wc/…, zoom.us/wc/join/…, us02web.zoom.us/wc/…, webinars at /w/.
-    re: /^https:\/\/([\w-]+\.)*zoom\.(us|com)\/(wc|j|w)\//i,
+    re: /^https:\/\/([\w-]+\.)*zoom\.(us|com)\/(wc|j|w|s)\//i,
     source: 'zoom',
     id: (url) => {
-      const n = /\/(?:wc|j|w)\/(?:join\/)?(\d{8,})/i.exec(url)
+      const n = /\/(?:wc|j|w|s)\/(?:join\/)?(\d{8,})/i.exec(url)
       return n ? `zoom.us/wc/${n[1]}` : noQuery(url)
     },
     clean: (t) => t.replace(/\s*[-–—|]\s*Zoom.*$/i, '')
   },
-  { re: /^https:\/\/(whereby\.com|app\.around\.co|meet\.jit\.si)\//i, source: 'other', id: noQuery, clean: (t) => t },
+  { re: /^https:\/\/([\w-]+\.)?(whereby\.com|app\.around\.co|meet\.jit\.si|8x8\.vc)\//i, source: 'other', id: noQuery, clean: (t) => t },
+  // Webex in the browser (acme.webex.com/meet/…, /wbxmjs/joinservice/…): the site names the call.
+  { re: /^https:\/\/([\w-]+\.)*webex\.com\//i, source: 'webex', id: (url) => new URL(url).host.toLowerCase(), clean: (t) => t.replace(/\s*[-–—|]\s*Webex.*$/i, '') },
+  { re: /^https:\/\/(app|meet|global)\.goto\.com\/|^https:\/\/([\w-]+\.)?gotomeeting\.com\//i, source: 'goto', id: noQuery, clean: (t) => t.replace(/\s*[-–—|]\s*GoTo.*$/i, '') },
+  { re: /^https:\/\/voice\.google\.com\//i, source: 'other', id: () => 'voice.google.com', clean: () => 'Google Voice' },
+  { re: /^https:\/\/phone\.aircall\.io\//i, source: 'aircall', id: () => 'aircall', clean: () => '' },
   {
     // The Teams URL doesn't name the call (it stays …/v2/ all along), so the key is the site.
     re: /^https:\/\/([\w-]+\.)*(teams\.microsoft\.com|teams\.live\.com|teams\.cloud\.microsoft|teams\.microsoft\.us)(\/|$)/i,
@@ -104,8 +164,18 @@ const WEB: { re: RegExp; source: MeetingSource; id: (url: string) => string; cle
     clean: (t) => t.replace(/\s*\|\s*Microsoft Teams.*$/i, '')
   },
   // Slack in a browser: app.slack.com, or a workspace address (acme.slack.com) before it redirects.
-  { re: /^https:\/\/(?!www\.)[\w-]+\.slack\.com\//i, source: 'slack', id: () => 'slack', clean: () => '' }
+  { re: /^https:\/\/(?!www\.)[\w-]+\.slack\.com\//i, source: 'slack', id: () => 'slack', clean: () => '' },
+  // Chat sites that are open all day; their calls don't change the address (see CHAT_AFTER_MS).
+  { re: /^https:\/\/web\.whatsapp\.com\//i, source: 'whatsapp', id: () => 'whatsapp', clean: () => '' },
+  { re: /^https:\/\/web\.telegram\.org\//i, source: 'telegram', id: () => 'telegram', clean: () => '' },
+  { re: /^https:\/\/([\w-]+\.)?discord\.com\/channels\//i, source: 'discord', id: () => 'discord', clean: () => '' },
+  { re: /^https:\/\/(www\.)?(messenger\.com|facebook\.com\/(messages|groupcall))/i, source: 'messenger', id: () => 'messenger', clean: () => '' },
+  // Meet inside Gmail / Google Chat: the tab title carries the meeting code.
+  { re: /^https:\/\/(mail|chat)\.google\.com\/.*/i, source: 'meet', id: () => 'gmail', clean: (t) => t.replace(/\s*[-–—]\s*(Gmail|Google Chat).*$/i, '') }
 ]
+
+/** Gmail and Chat tabs count as a Meet call only while their title shows a meeting code. */
+const MEET_CODE = /\b[a-z]{3}-[a-z]{4}-[a-z]{3}\b/i
 
 const START_AFTER_MS = 3000
 const UNKNOWN_BROWSER_AFTER_MS = 15000 // a browser using the mic without a known meeting tab: ask after 15 s
@@ -114,22 +184,30 @@ const AIRCALL_AFTER_MS = 5000
 // A Slack or Teams tab is open all day, so mic use in that browser may be something else
 // (dictation, a voice note): wait a little longer before calling it a call.
 const SHARED_TAB_AFTER_MS = 8000
+// Chat apps (WhatsApp, Telegram, Signal, Messenger, Discord) also take the mic for voice messages,
+// which are usually short: count it as a call only after 10 s without a break.
+const CHAT_AFTER_MS = 10000
+const CHAT_SOURCES = new Set<MeetingSource>(['whatsapp', 'telegram', 'discord', 'signal', 'messenger'])
+// An app we don't know holding the mic: ask after 15 s (unless it's in NOT_CALLS).
+const UNKNOWN_APP_AFTER_MS = 15000
 
 /** How long a candidate must hold the mic, without a break, before it counts as a call. */
 export function startAfterMs(c: Candidate): number {
   if (c.key.startsWith('web:unknown')) return UNKNOWN_BROWSER_AFTER_MS
+  if (c.key.startsWith('app:unknown')) return UNKNOWN_APP_AFTER_MS
+  if (CHAT_SOURCES.has(c.source)) return CHAT_AFTER_MS
   if (c.source === 'aircall') return AIRCALL_AFTER_MS
   if (c.key.startsWith('web:slack') || c.key.startsWith('web:teams')) return SHARED_TAB_AFTER_MS
   return START_AFTER_MS
 }
 
 /**
- * Calls that are announced instead of recorded right away. Only a browser on the mic with no
- * meeting tab we know (could be dictation, voice search, or tabs we can't read): every known call
- * app records by itself.
+ * Calls that are announced instead of recorded right away: a browser on the mic with no meeting tab
+ * we know (could be dictation, voice search, or tabs we can't read), and an app we don't know.
+ * Every known call app and call site records by itself.
  */
 export function needsConfirmation(c: Candidate): boolean {
-  return c.key.startsWith('web:unknown')
+  return c.key.startsWith('web:unknown') || c.key.startsWith('app:unknown')
 }
 
 const BIDI = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g
@@ -158,6 +236,7 @@ export class Detector extends EventEmitter {
   private active: string | null = null
   private dismissed = new Map<string, number>()
   private retryAt = new Map<string, number>()
+  private parked = new Map<string, number>()
   /** Last meeting tab seen per browser, for the moments its tabs can't be read. */
   private lastWeb = new Map<string, string>()
   private enabled: (source: MeetingSource) => boolean
@@ -195,6 +274,16 @@ export class Detector extends EventEmitter {
   /** Recording started by hand: treat a call that is already on as handled. */
   claim(key: string | null): void {
     this.active = key
+    if (key) this.parked.delete(key)
+  }
+
+  /**
+   * A "click to record" notification is showing for this call: don't announce it again for a while,
+   * and don't let it block other calls (a known call that starts meanwhile records by itself).
+   */
+  park(key: string, ms = 120_000): void {
+    if (this.active === key) this.active = null
+    this.parked.set(key, Date.now() + ms)
   }
 
   update(users: MicUser[], tabs: Tabs): void {
@@ -221,6 +310,12 @@ export class Detector extends EventEmitter {
     }
   }
 
+  /** The latest snapshot of a call that is holding the mic now (its app's input devices included). */
+  candidate(key: string): Candidate | null {
+    const s = this.seen.get(key)
+    return s && s.absentSince === null ? s.cand : null
+  }
+
   current(): Candidate | null {
     for (const s of this.seen.values()) if (s.absentSince === null) return s.cand
     return null
@@ -232,7 +327,12 @@ export class Detector extends EventEmitter {
     const app = APPS.find((a) => bundle.startsWith(a.prefix.toLowerCase()))
     if (app) return { key: `app:${app.source}`, source: app.source, appName: app.name, micUids: u.inputDevices }
     const browser = BROWSERS.find((b) => bundle.startsWith(b.prefix.toLowerCase()))
-    if (!browser) return null
+    if (!browser) {
+      const name = (u.name || '').toLowerCase()
+      if (!bundle || NOT_CALLS.some((n) => bundle.startsWith(n) || name.startsWith(n))) return null
+      // An app we don't know is holding the mic: maybe a call (a softphone, a new meeting app).
+      return { key: `app:unknown:${bundle}`, source: 'other', appName: u.name || u.bundleID, micUids: u.inputDevices }
+    }
     const open = browser.tabsKey.flatMap((k) => tabs[k] ?? []).map(normalizeTab)
     if (open.length === 0) {
       // The tab list couldn't be read this time (the browser was busy, the read timed out): stay
@@ -242,7 +342,7 @@ export class Detector extends EventEmitter {
       if (s) return { ...s.cand, micUids: u.inputDevices }
     }
     for (const w of WEB) {
-      const tab = open.find((t) => w.re.test(t.url))
+      const tab = open.find((t) => w.re.test(t.url) && (w.id(t.url) !== 'gmail' || MEET_CODE.test(t.title)))
       if (!tab) continue
       const key = `web:${w.source}:${w.id(tab.url)}`
       this.lastWeb.set(browser.name, key)
@@ -278,7 +378,11 @@ export class Detector extends EventEmitter {
     const now = Date.now()
     if (this.active) {
       const s = this.seen.get(this.active)
-      if (!s || (s.absentSince !== null && now - s.absentSince >= END_AFTER_MS)) {
+      // Gone for 15 s, or replaced right away by another call in the same browser/app (Meet A → Meet B).
+      const replaced =
+        !!s && s.absentSince !== null &&
+        [...this.seen].some(([k, x]) => k !== this.active && x.absentSince === null && x.cand.appName === s.cand.appName && !k.includes(':unknown'))
+      if (!s || replaced || (s.absentSince !== null && now - s.absentSince >= END_AFTER_MS)) {
         const key = this.active
         this.active = null
         this.emit('end', key)
@@ -288,6 +392,7 @@ export class Detector extends EventEmitter {
         if (s.absentSince !== null || now - s.since < startAfterMs(s.cand)) continue
         if (this.dismissed.has(key) || !this.enabled(s.cand.source)) continue
         if ((this.retryAt.get(key) ?? 0) > now) continue
+        if ((this.parked.get(key) ?? 0) > now) continue
         this.active = key
         this.emit('start', s.cand)
         break
@@ -298,6 +403,7 @@ export class Detector extends EventEmitter {
         this.seen.delete(key)
         this.dismissed.delete(key)
         this.retryAt.delete(key)
+        this.parked.delete(key)
       }
     }
     // Stop pressed after the call had already ended (its entry is gone): without this the key

@@ -14,6 +14,12 @@ const PANES: Partial<Record<Kind, string>> = {
   calendar: 'Privacy_Calendars'
 }
 
+/** Browsers whose tabs tell which call is on (Meet, Zoom, Teams, WhatsApp Web…). */
+const BROWSER_BUNDLES = [
+  'com.google.Chrome', 'com.apple.Safari', 'company.thebrowser.Browser', 'company.thebrowser.dia',
+  'com.microsoft.edgemac', 'com.brave.Browser', 'com.vivaldi.Vivaldi', 'com.operasoftware.Opera'
+]
+
 /** Permission cards: what each one is for, its state, and a button that asks macOS. */
 export function PermissionList({ compact = false }: { compact?: boolean }) {
   const { t } = useTranslation()
@@ -38,6 +44,16 @@ export function PermissionList({ compact = false }: { compact?: boolean }) {
   }
 
   const ask = async (k: Kind, bundleID?: string): Promise<void> => {
+    if (k === 'automation') {
+      // Every browser a call can run in: macOS asks once per browser (only running browsers can be asked).
+      let best = 'denied'
+      for (const b of BROWSER_BUNDLES) {
+        const r = await invoke<string>('permissions:request', 'automation', b).catch(() => 'unknown')
+        if (r === 'granted') best = 'granted'
+      }
+      setAsked((a) => ({ ...a, automation: best }))
+      return
+    }
     const r = await invoke<string>('permissions:request', k, bundleID)
     setAsked((a) => ({ ...a, [k]: r }))
     if (r === 'denied' && PANES[k]) void invoke('permissions:open', PANES[k])

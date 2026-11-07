@@ -96,6 +96,8 @@ ul.plain { margin: 0; padding-inline-start: 20px; display: flex; flex-direction:
 .moment.live::before { border-color: var(--rec); background: var(--rec); }
 .say { display: flex; flex-wrap: wrap; gap: 8px; }
 .say span { font-size: 15px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips span { font-size: 14px; line-height: 1.5; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 1px 10px; }
 .ts { font: 500 12.5px/1 var(--mono); color: var(--ink-3); direction: ltr; unicode-bidi: isolate; }
 .line { display: grid; grid-template-columns: auto auto 1fr; gap: 10px; align-items: baseline; font-size: 15px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
 .line b { font-weight: 600; }
@@ -116,7 +118,7 @@ footer { color: var(--ink-3); font-size: 14px; border-top: 1px solid var(--line)
     <div class="wave" aria-hidden="true" id="wave"></div>
     <span class="eyebrow">Klara Wisper · macOS</span>
     <h1>תמלול שיחות והכתבה בעברית, מקומית על המק, עם Claude לפני, במהלך ואחרי כל שיחה</h1>
-    <p class="lede">Zoom, Meet, Teams, Slack ו-Aircall מוקלטים לבד, מהאפליקציה ומהדפדפן. כל שיחה מקבלת את השם שלה מהיומן, ו-Claude מסכם אותה דקה-שתיים אחרי שהיא נגמרת. התמלול רץ על המחשב, והאודיו לא יוצא ממנו.</p>
+    <p class="lede">Zoom, Meet, Teams, Slack, WhatsApp ועוד מוקלטים לבד, מהאפליקציה ומהדפדפן, וכל שיחה מקבלת הקלטה משלה. השם מגיע מהיומן, ו-Claude מסכם את השיחה דקה-שתיים אחרי שהיא נגמרת. התמלול רץ על המחשב, והאודיו לא יוצא ממנו.</p>
     <div class="links">
       <a class="btn primary" href="https://github.com/klara-gidash/klara-wisper/releases/latest">הורדה ל-Mac ול-Windows</a>
       <a class="btn" href="https://github.com/klara-gidash/klara-wisper/blob/main/docs/INSTALL.he.md">מדריך ההתקנה</a>
@@ -143,12 +145,12 @@ footer { color: var(--ink-3); font-size: 14px; border-top: 1px solid var(--line)
       <div class="card">
         <span class="k">Detect</span>
         <h3>זיהוי שיחות אוטומטי</h3>
-        <p>כשהמיקרופון נפתח בשיחת Zoom, Meet, Teams, Slack או Aircall, ההקלטה מתחילה לבד, גם בלשונית בדפדפן. לפגישה פנים מול פנים מתחילים הקלטה מהתפריט.</p>
+        <p>כשהמיקרופון נפתח בשיחה, ההקלטה מתחילה לבד, גם בלשונית בדפדפן (הרשימה ב"עובד עם"). המיקרופון עוקב אחרי אפליקציית השיחה, גם כשהיא עוברת לאוזניות. לפגישה פנים מול פנים מתחילים הקלטה מהתפריט.</p>
       </div>
       <div class="card">
         <span class="k">Calendar</span>
         <h3>שם ומשתתפים מהיומן</h3>
-        <p>כל שיחה מקבלת את השם ואת רשימת המשתתפים מהאירוע ביומן. שיחה מזדמנת, בלי אירוע, מקבלת מ-Claude שם שמתאר אותה.</p>
+        <p>כל שיחה מקבלת את השם ואת רשימת המשתתפים מהאירוע ביומן, מכל היומנים שבלוח השנה של המק. שיחה מזדמנת, בלי אירוע, מקבלת מ-Claude שם שמתאר אותה.</p>
       </div>
       <div class="card">
         <span class="k">Summary</span>
@@ -161,6 +163,46 @@ footer { color: var(--ink-3); font-size: 14px; border-top: 1px solid var(--line)
         <p>דרך שרת MCP מקומי, Claude Desktop ו-Claude Code יכולים לחפש בשיחות ובהכתבות, להכין לפגישה, להשלים מה שפוספס, ולסכם את היום.</p>
       </div>
     </div>
+  </section>
+
+  <section aria-labelledby="apps">
+    <h2 id="apps">עובד עם</h2>
+    <p class="muted">השיחות מזוהות לבד, באפליקציה או בלשונית בדפדפן, בלי ללחוץ על כלום.</p>
+    <div class="grid">
+      <div class="card">
+        <span class="k">Mac apps</span>
+        <h3>אפליקציות במק</h3>
+        <div class="chips"><span>Zoom</span><span>Teams</span><span>Slack</span><span>FaceTime</span><span>Webex</span><span>Aircall</span><span>WhatsApp</span><span>Telegram</span><span>Discord</span><span>Signal</span><span>Messenger</span><span>GoTo</span></div>
+      </div>
+      <div class="card">
+        <span class="k">Browser</span>
+        <h3>בדפדפן</h3>
+        <div class="chips"><span>Google Meet</span><span>Meet ב-Gmail וב-Chat</span><span>Zoom</span><span>Teams</span><span>Slack</span><span>Webex</span><span>GoTo</span><span>Whereby</span><span>Jitsi</span><span>Google Voice</span><span>Aircall</span><span>WhatsApp Web</span><span>Telegram Web</span><span>Discord</span><span>Messenger</span></div>
+        <p>הלשונית נקראת ב-Chrome, Safari, Arc, Edge, Brave, Vivaldi ו-Opera (עם הרשאת אוטומציה לכל דפדפן). ב-Firefox, Zen, Dia, Chromium ו-Orion מופיעה הודעה "ללחוץ כדי להקליט".</p>
+      </div>
+      <div class="card">
+        <span class="k">Timing</span>
+        <h3>מתי ההקלטה מתחילה</h3>
+        <p>3 עד 8 שניות אחרי שהשיחה תופסת את המיקרופון. ב-WhatsApp, Telegram, Signal, Messenger ו-Discord אחרי 10 שניות, כדי שהודעה קולית קצרה לא תוקלט. אפליקציה לא מוכרת מקבלת אחרי 15 שניות הודעה "ללחוץ כדי להקליט", חוץ מהכתבה, Siri, Claude ותוכנות הקלטה.</p>
+      </div>
+      <div class="card">
+        <span class="k">Windows</span>
+        <h3>ב-Windows (ניסיוני)</h3>
+        <p>אותן אפליקציות, בלי FaceTime, לפי שם התוכנה או חבילת ה-Store, ושיחות בדפדפן לפי כותרת החלון. הגרסה נבנית אוטומטית, אבל עוד לא נוסתה על מחשב Windows אמיתי.</p>
+      </div>
+    </div>
+    <p class="note"><b>שיחות ברצף:</b> כל שיחה מקבלת הקלטה משלה, גם Zoom אחרי Zoom או Zoom ואחריו WhatsApp. רק חזרה לאותה פגישת Meet תוך 2 דקות ממשיכה את אותה הקלטה. התמלול נשמר ברגע שהשיחה נגמרת, ו-Claude יכול לקרוא אותו מיד.</p>
+  </section>
+
+  <section aria-labelledby="calendar">
+    <h2 id="calendar">היומן: מה שמופיע בלוח השנה של המק</h2>
+    <p>Klara Wisper קוראת את אפליקציית לוח השנה (Calendar) של macOS, דרך EventKit של Apple. היא לא מתחברת בעצמה ל-Google או ל-Microsoft: כל חשבון, של העבודה או פרטי, מוסיפים פעם אחת בהגדרות המערכת, ומשם היא רואה את כל היומנים יחד.</p>
+    <ol class="steps">
+      <li><div><h3>להוסיף חשבון</h3><p class="muted">הגדרות המערכת ← חשבונות אינטרנט ← הוספת חשבון.</p></div></li>
+      <li><div><h3>לבחור את סוג החשבון</h3><p class="muted">Google (גם Google Workspace של העבודה), Microsoft Exchange (Outlook ו-Microsoft 365), או iCloud. מתחברים ומסמנים "לוחות שנה".</p></div></li>
+      <li><div><h3>לאשר גישה ליומן</h3><p class="muted">בהקמה של Klara Wisper, או בהגדרות ← הרשאות. אירוע שמופיע בלוח השנה של המק יופיע גם במסך הבית.</p></div></li>
+    </ol>
+    <p class="muted small">ב-Windows אין עדיין יומן: השיחות נקראות לפי האפליקציה או הלשונית.</p>
   </section>
 
   <section aria-labelledby="flow">
@@ -190,7 +232,7 @@ footer { color: var(--ink-3); font-size: 14px; border-top: 1px solid var(--line)
       <div class="moment">
         <span class="ts">19:00</span>
         <h3>בסוף היום: סיכום יומי</h3>
-        <p class="muted">סקירה אחת של כל השיחות של היום: שעה, שם, משתתפים ונושא, 2–3 נקודות עיקריות לכל שיחה, והמשימות שנשארו פתוחות. שיחה שעוד אין לה סיכום מסוכמת ונשמרת קודם. משימה מתוזמנת ב-Claude Desktop יכולה להריץ את זה לבד כל ערב. הסקיל: <code>klara-daily-digest</code>.</p>
+        <p class="muted">סקירה אחת של כל השיחות של היום: שעה, שם, משתתפים ונושא, 2 עד 3 נקודות עיקריות לכל שיחה, והמשימות שנשארו פתוחות. שיחה שעוד אין לה סיכום מסוכמת ונשמרת קודם. משימה מתוזמנת ב-Claude Desktop יכולה להריץ את זה לבד כל ערב. הסקיל: <code>klara-daily-digest</code>.</p>
         <div class="say"><span>"מה היה היום?"</span><span>"על מה היו השיחות אתמול?"</span></div>
       </div>
     </div>
@@ -222,11 +264,28 @@ footer { color: var(--ink-3); font-size: 14px; border-top: 1px solid var(--line)
     </div>
   </section>
 
-  <section aria-labelledby="phone">
-    <h2 id="phone">לשאול את Claude מהטלפון</h2>
-    <p>אופציונלי: מחבר שרץ בחשבון Cloudflare פרטי, ומאפשר ל-Claude באפליקציה בטלפון לענות על השיחות. אפשר לבקש את הסיכום היומי, לחפש נושא, או לקרוא מה סוכם בשיחה מסוימת.</p>
+  <section aria-labelledby="integrations">
+    <h2 id="integrations">חיבורים</h2>
+    <p class="muted">שלושה חיבורים אופציונליים, כבויים כברירת מחדל. את שני הראשונים מפעילים בהגדרות ← חיבורים.</p>
+    <div class="grid">
+      <div class="card">
+        <span class="k">Claude Desktop</span>
+        <h3>פתיחה ב-Claude אחרי שיחה</h3>
+        <p>כבוי, בהתראה, או פתיחה מיד. אחרי שיחה Claude Desktop נפתח עם בקשה מוכנה, דרך קישור <code>claude://</code> ש-Anthropic מתעדת. Claude מציג את הסיכום, ההחלטות והמשימות, וממשיכים משם: מייל למשתתפים, משימות המשך. כשהסיכום האוטומטי כבוי, הבקשה היא לסכם את השיחה.</p>
+      </div>
+      <div class="card">
+        <span class="k">Obsidian</span>
+        <h3>פתק לכל שיחה בכספת</h3>
+        <p>בוחרים את תיקיית הכספת, וכל שיחה נשמרת בתיקייה <code>Klara Wisper</code> שבתוכה, כפתק עם מאפיינים (YAML), סיכום ותמלול. הפתק מתעדכן לבד, ויש גם "ייצוא כל השיחות". עריכות בתוך הפתק נדרסות בעדכון הבא.</p>
+      </div>
+      <div class="card">
+        <span class="k">Cloudflare</span>
+        <h3 id="phone">לשאול את Claude מהטלפון</h3>
+        <p>מחבר שרץ בחשבון Cloudflare פרטי, ומאפשר ל-Claude באפליקציה בטלפון לענות על השיחות: הסיכום היומי, חיפוש נושא, או מה סוכם בשיחה מסוימת.</p>
+      </div>
+    </div>
     <div class="say"><span>"מה היה היום?"</span><span>"מה סוכם עם Acme?"</span><span>"איפה דיברנו על תמחור?"</span></div>
-    <p class="note">המחבר קריאה בלבד: מהטלפון לא משנים ולא שומרים כלום. בלעדיו, הכל נשאר על המק. מה עולה ל-Cloudflare ואיך מקימים: <a href="https://github.com/klara-gidash/klara-wisper/blob/main/docs/CLOUDFLARE.he.md">המדריך למחבר</a>.</p>
+    <p class="note">המחבר לטלפון קריאה בלבד: הוא מקבל טוקן נפרד, ומהטלפון לא משנים ולא שומרים כלום. מחיקת שיחה באפליקציה מוחקת גם את העותק שלה ב-Cloudflare. בלעדיו, הכל נשאר על המק. מה עולה ל-Cloudflare ואיך מקימים: <a href="https://github.com/klara-gidash/klara-wisper/blob/main/docs/CLOUDFLARE.he.md">המדריך למחבר</a>.</p>
   </section>
 
   <section aria-labelledby="install">
@@ -235,8 +294,8 @@ footer { color: var(--ink-3); font-size: 14px; border-top: 1px solid var(--line)
       <li><div><h3>להוריד</h3><p class="muted">בעמוד ה-<a href="https://github.com/klara-gidash/klara-wisper/releases/latest">Releases</a> מורידים את <code>Klara Wisper.dmg</code>. צריך מק עם שבב Apple (M1 ומעלה), macOS 14.4 ומעלה, ובערך 4GB פנויים.</p></div></li>
       <li><div><h3>לגרור ל-Applications ולפתוח</h3><p class="muted">בפתיחה הראשונה macOS חוסם את האפליקציה כי היא לא חתומה אצל Apple. פותחים את הגדרות המערכת ← פרטיות ואבטחה ← "לפתוח בכל זאת". צריך לעשות את זה פעם אחת.</p></div></li>
       <li><div><h3>ההקמה הראשונה</h3><p class="muted">האפליקציה מתקינה לבד את מנוע התמלול ומורידה את המודלים (כ-2.4GB, עם פס התקדמות). אין צורך בהרשאות מנהל.</p></div></li>
-      <li><div><h3>הרשאות</h3><p class="muted">מיקרופון, קול המחשב, נגישות (להדבקת הכתבה), ניטור מקלדת (מקש fn), יומן, ואוטומציה לדפדפן (לזיהוי Meet ו-Teams בלשונית). מסך ההקמה מבקש את כולן.</p></div></li>
-      <li><div><h3>היומן של Google</h3><p class="muted">מוסיפים את חשבון ה-Google ב"הגדרות המערכת ← חשבונות אינטרנט". מכאן כל שיחה מקבלת את השם ואת המשתתפים מהאירוע ביומן.</p></div></li>
+      <li><div><h3>הרשאות</h3><p class="muted">מיקרופון, קול המחשב, נגישות (להדבקת הכתבה), ניטור מקלדת (מקש fn), יומן, ואוטומציה לכל דפדפן (כדי לזהות את השיחה בלשונית). מסך ההקמה מבקש את כולן. אחרי העדכון ל-0.1.1 macOS מבקש שוב את המיקרופון, קול המחשב, הנגישות וניטור המקלדת, פעם אחת.</p></div></li>
+      <li><div><h3>היומנים</h3><p class="muted">מוסיפים את החשבונות (Google, Exchange או iCloud) ב"הגדרות המערכת ← חשבונות אינטרנט". מכאן כל שיחה מקבלת את השם ואת המשתתפים מהאירוע ביומן.</p></div></li>
     </ol>
     <p class="muted small">כל הפרטים, כולל פתרון בעיות והסרה: <a href="https://github.com/klara-gidash/klara-wisper/blob/main/docs/INSTALL.he.md">מדריך ההתקנה</a>.</p>
   </section>
@@ -258,16 +317,22 @@ footer { color: var(--ink-3); font-size: 14px; border-top: 1px solid var(--line)
       <li>Claude מקבל את הטקסט של השיחות רק כשפונים אליו, ובסיכום האוטומטי אם הוא מופעל.</li>
       <li>תוכן השיחות מוגדר אצל Claude כ"מידע, לא הוראות": הוא לא שולח מייל ולא מבצע פעולה רק כי מישהו ביקש את זה בשיחה.</li>
       <li>מייל יוצא רק כשמבקשים, קודם כטיוטה, ורק אחרי אישור מפורש.</li>
-      <li>המחבר לטלפון אופציונלי, ורץ בחשבון Cloudflare פרטי.</li>
+      <li>הפתיחה ב-Claude אחרי שיחה רק ממלאת בקשה ב-Claude Desktop. היא לא נשלחת לבד.</li>
+      <li>הייצוא ל-Obsidian כותב רק לתיקייה שנבחרה, על המחשב.</li>
+      <li>המחבר לטלפון אופציונלי, רץ בחשבון Cloudflare פרטי, ומקבל טוקן נפרד לקריאה בלבד. מחיקת שיחה מוחקת גם את העותק שם.</li>
+      <li>הלוג של האפליקציה לא מכיל תמלולים, שמות של שיחות או תשובות של Claude.</li>
     </ul>
   </section>
 
   <section aria-labelledby="faq">
     <h2 id="faq">אם משהו לא עובד</h2>
     <div class="faq">
-      <details><summary>היומן לא מחובר</summary><p>במסך הבית לוחצים "חיבור". אם macOS לא שואל, נפתח המסך "לוחות שנה" בהגדרות המערכת: ליד Klara Wisper בוחרים "גישה מלאה" (Full Access), וחוזרים לאפליקציה.</p></details>
+      <details><summary>היומן לא מחובר</summary><p>במסך הבית לוחצים "חיבור". אם macOS לא שואל, נפתח המסך "לוחות שנה" בהגדרות המערכת: ליד Klara Wisper בוחרים "גישה מלאה" (Full Access), וחוזרים לאפליקציה. יומן שלא מופיע באפליקציית לוח השנה של המק לא יופיע גם כאן: מוסיפים את החשבון ב"חשבונות אינטרנט".</p></details>
       <details><summary>אין סיכום אחרי שיחה</summary><p>בהגדרות ← Claude בודקים ש"סיכום אוטומטי" דלוק ושההתחברות ל-Claude בוצעה. שיחות קצרות מ-3 דקות לא מסוכמות.</p></details>
       <details><summary>שיחה בדפדפן לא זוהתה</summary><p>צריך לאשר לאפליקציה לקרוא את הלשוניות בדפדפן: הגדרות המערכת ← פרטיות ואבטחה ← אוטומציה ← Klara Wisper ← לסמן את הדפדפן. בלי ההרשאה הזאת, אחרי 15 שניות מופיעה הודעה ששואלת אם להקליט.</p></details>
+      <details><summary>שיחת WhatsApp לא נקלטה</summary><p>ב-WhatsApp, Telegram, Signal, Messenger ו-Discord ההקלטה מתחילה רק אחרי 10 שניות רצופות, כדי שהודעה קולית לא תוקלט. בהגדרות ← פגישות בודקים ש"הקלטה אוטומטית של שיחות" דלוק ושהכפתור של WhatsApp מסומן. ב-WhatsApp Web צריך גם הרשאת אוטומציה לדפדפן.</p></details>
+      <details><summary>מופיעה הודעה "ללחוץ כדי להקליט" במקום הקלטה</summary><p>האפליקציה לא בטוחה שזו שיחה: לדפדפן אין הרשאת אוטומציה, הלשוניות שלו לא נקראות (Firefox, Zen, Dia, Chromium, Orion), זו אפליקציה לא מוכרת, או ש"הקלטה אוטומטית של שיחות" כבוי. לחיצה על ההודעה מתחילה הקלטה, וההודעה לא חוסמת שיחות אחרות.</p></details>
+      <details><summary>אחרי העדכון macOS מבקש שוב הרשאות</summary><p>בעדכון ל-0.1.1 העוזר של Klara Wisper נבנה מחדש, ולכן macOS מבקש פעם נוספת מיקרופון, הקלטת אודיו מערכת, נגישות וניטור קלט. מאשרים פעם אחת. אם הרשאה מסומנת ובכל זאת לא עובדת, מכבים ומדליקים אותה בהגדרות המערכת.</p></details>
       <details><summary>Claude לא רואה את Klara Wisper</summary><p>סוגרים את Claude Desktop לגמרי (⌘Q) ופותחים מחדש. אם זה לא עוזר: בהגדרות ← Claude לוחצים "חיבור", ושוב סוגרים ופותחים את Claude Desktop.</p></details>
       <details><summary>לא מוקלט כלום אחרי הפעלה מחדש של המחשב</summary><p>בהגדרות מוודאים ש"פתיחה עם הכניסה למחשב" דלוק.</p></details>
     </div>

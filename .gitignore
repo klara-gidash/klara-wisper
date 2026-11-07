@@ -18,4 +18,6 @@ cloudflare/.dev.vars
 .env.*
 *.pem
 *.key
+*.p12
 *.zip
+.claude/settings.local.json
