@@ -46,7 +46,7 @@ os.umask(0o077)
 
 def settings() -> dict:
     try:
-        return json.loads((DATA_DIR / "settings.json").read_text())
+        return json.loads((DATA_DIR / "settings.json").read_text(encoding="utf-8"))
     except Exception:
         return {}
 
@@ -108,7 +108,7 @@ def read_json(path: Path, tries: int = 8) -> dict | None:
     can land on a half-written file; try again briefly instead of returning an empty transcript."""
     for attempt in range(tries):
         try:
-            return json.loads(path.read_text())
+            return json.loads(path.read_text(encoding="utf-8"))
         except ValueError:  # truncated or half-written JSON (or a split UTF-8 character)
             if attempt < tries - 1:
                 time.sleep(0.04)
@@ -244,7 +244,7 @@ def transcript_text(meta: dict) -> str:
 
 def atomic_write(path: Path, text: str) -> None:
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-")
-    with os.fdopen(fd, "w") as f:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(text)
     os.replace(tmp, path)
 
@@ -337,7 +337,7 @@ def get_transcript(meeting_id: str) -> str:
         # The notes were written from the transcript (and can be edited by hand), so they are data too.
         body += (
             f"\n\nSaved notes (written earlier by Claude):\n{UNTRUSTED}\n"
-            f"<meeting_notes>\n{fence(notes.read_text()[:MAX_NOTES])}\n</meeting_notes>"
+            f"<meeting_notes>\n{fence(notes.read_text(encoding='utf-8')[:MAX_NOTES])}\n</meeting_notes>"
         )
     return body
 
@@ -350,7 +350,7 @@ def list_dictations(query: str | None = None, limit: int = 50) -> str:
     rows = []
     folder = root() / "Dictations"
     for f in sorted(folder.glob("*.jsonl")) if folder.is_dir() else []:
-        for line in f.read_text().splitlines():
+        for line in f.read_text(encoding="utf-8").splitlines():
             try:
                 rows.append(json.loads(line))
             except ValueError:

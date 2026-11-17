@@ -1,5 +1,7 @@
 #!/bin/bash
-# Builds release/Klara Wisper.dmg for colleagues (Apple Silicon, macOS 14.4+). Touches nothing installed.
+# Builds the macOS installers for colleagues (Apple Silicon, macOS 14.4+). Touches nothing installed:
+#   release/Klara Wisper.pkg  the recommended one: double-click, Install, and the app opens its install wizard
+#   release/Klara Wisper.dmg  the same app to drag into Applications (KLARA_SKIP_PKG=1 builds only this)
 #
 # The app is self-contained: it ships the pinned uv binary and the engine's source + uv.lock. On first
 # launch it installs Python and the locked packages into ~/Library/Application Support/Klara Wisper/engine
@@ -72,6 +74,38 @@ for attempt in 1 2 3 4; do
   echo "hdiutil failed (attempt $attempt), retrying in 10 s" >&2
   rm -f "$DMG"; sleep 10
 done
+# 5. the installer package (Klara Wisper.pkg): the same signed app, installed into /Applications by
+# macOS's own Installer. It refuses a Mac that can't run the app (installer/mac-pkg/Distribution.xml),
+# quits a running copy first, and opens the app when it's done, so its install wizard starts by itself.
+# Files installed this way are not quarantined, so Gatekeeper asks once (for the pkg), not twice.
+if [ "${KLARA_SKIP_PKG:-}" != 1 ]; then
+  VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+  PKGWORK="$(mktemp -d)"
+  mkdir -p "$PKGWORK/root/Applications" "$PKGWORK/pkgs"
+  ditto "$APP" "$PKGWORK/root/Applications/Klara Wisper.app"
+  pkgbuild --analyze --root "$PKGWORK/root" "$PKGWORK/components.plist" >/dev/null
+  # Never "relocate" the install onto another copy with the same bundle id (a build folder, the dmg).
+  n=0
+  while /usr/libexec/PlistBuddy -c "Print :$n" "$PKGWORK/components.plist" >/dev/null 2>&1; do
+    /usr/libexec/PlistBuddy -c "Delete :$n:BundleIsRelocatable" "$PKGWORK/components.plist" >/dev/null 2>&1 || true
+    /usr/libexec/PlistBuddy -c "Add :$n:BundleIsRelocatable bool false" "$PKGWORK/components.plist"
+    n=$((n + 1))
+  done
+  # The copy staged for the pkg has the installed app's identity too: keep it away from Launch Services.
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+    -u "$PKGWORK/root/Applications/Klara Wisper.app" 2>/dev/null || true
+  pkgbuild --root "$PKGWORK/root" --component-plist "$PKGWORK/components.plist" --identifier io.klara.wisper.app \
+    --version "$VERSION" --install-location / --scripts installer/mac-pkg/scripts "$PKGWORK/pkgs/app.pkg"
+  sed "s/@VERSION@/$VERSION/g" installer/mac-pkg/Distribution.xml >"$PKGWORK/Distribution.xml"
+  PKG="$ROOT/release/Klara Wisper.pkg"
+  rm -f "$PKG"
+  productbuild --distribution "$PKGWORK/Distribution.xml" --resources installer/mac-pkg/resources \
+    --package-path "$PKGWORK/pkgs" "$PKG"
+  rm -rf "$PKGWORK"
+  shasum -a 256 "$PKG"
+  echo "built $PKG ($(du -h "$PKG" | cut -f1))"
+fi
+
 # Build copies share the installed app's identity: keep them away from Launch Services and Spotlight.
 LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 for stale in "$APP" "$HELPER_OUT"; do "$LSREG" -u "$stale" 2>/dev/null || true; done

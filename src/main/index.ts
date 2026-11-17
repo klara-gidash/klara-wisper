@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { audio } from './audio'
 import { matchPastMeetings } from './backfill'
+import { googleLinked } from './googleCalendar'
 import { restartEngineWhenIdle } from './models'
 import * as claude from './claude'
 import { dictation, TOGGLE_SHORTCUT } from './dictation'
@@ -22,6 +23,8 @@ import { setup } from './setup'
 import { autoSummary } from './summarize'
 import { db } from './storage/db'
 import { createTray } from './tray'
+import { cleanupOutside } from './uninstall'
+import { runHealth } from './health'
 import { watchLibrary } from './watch'
 import { broadcast, pillWindow, showLibrary } from './windows'
 
@@ -46,7 +49,18 @@ for (const level of ['log', 'warn', 'error'] as const) {
 }
 void dictation // starts listening to the push-to-talk key
 
-if (!app.requestSingleInstanceLock()) {
+// "Klara Wisper.exe --cleanup": run by the Windows uninstaller. Takes out what the app added outside
+// its own folders (the Claude connection, the skills, the login item) and exits without a window.
+const cleanupOnly = process.argv.includes('--cleanup')
+if (cleanupOnly) {
+  const done = (): void => app.exit(0)
+  setTimeout(done, 25_000)
+  void app
+    .whenReady()
+    .then(() => cleanupOutside())
+    .catch(() => undefined)
+    .finally(done)
+} else if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', () => showLibrary())
@@ -183,8 +197,8 @@ async function configureHelper(): Promise<void> {
       .request('requestPermission', { kind: 'calendar' }, 180_000)
       .then((r) => console.log(`calendar asked after update: ${r.result}`))
       .catch(() => undefined)
-      .finally(() => void refreshPermissions().then((p) => p?.calendar === 'granted' && catchUp()))
-  } else if (perms?.calendar === 'granted') {
+      .finally(() => void refreshPermissions().then((p) => (p?.calendar === 'granted' || googleLinked()) && catchUp()))
+  } else if (perms?.calendar === 'granted' || googleLinked()) {
     catchUp()
   }
 }
@@ -203,6 +217,7 @@ function catchUp(): void {
 }
 
 app.whenReady().then(async () => {
+  if (cleanupOnly) return
   console.log(`Klara Wisper ${app.getVersion()} started (packaged: ${app.isPackaged})`)
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
   session.defaultSession.setPermissionCheckHandler(() => false)
@@ -260,6 +275,18 @@ app.whenReady().then(async () => {
   })
   if (setup.refresh().needed && settings.value.onboarded) void setup.run()
 
+  // "--health-check" (the CI smoke tests): once everything is installed, run the health check and
+  // write <data folder>/health.json, the same as the wizard's last step.
+  if (process.argv.includes('--health-check')) {
+    const started = Date.now()
+    const wait = setInterval(() => {
+      const idle = !setup.state.running && !setup.refresh().needed
+      if (!idle && Date.now() - started < 60 * 60_000) return
+      clearInterval(wait)
+      void runHealth().catch((err) => console.error('health check failed', err))
+    }, 5000)
+  }
+
   recorder.on('state', pushState)
   autoSummary.isBusy = () => !!recorder.live
   audio.on('devices', pushState)
@@ -279,26 +306,12 @@ app.whenReady().then(async () => {
     console.warn('could not register', TOGGLE_SHORTCUT)
   }
   // Claude Desktop sometimes rewrites its config without our entry; put the connection back so
-  // Claude can always read the calls (a dated copy of the old file is kept). Only while the
-  // claudeConnected setting is on: when it is off, nothing is added back or installed.
-  if (settings.value.claudeConnected) {
-    void claude
-      .status()
-      .then(async (s) => {
-        if (s.desktopInstalled && !s.desktop) {
-          claude.connectDesktop()
-          console.log('Claude Desktop: the Klara Wisper connection was missing, added it back')
-        }
-        // Claude Code too (the CLI, or the copy inside Claude Desktop), with the skills, so Claude
-        // can use the calls before, during and after them without any setup.
-        if (s.codeCli && !s.code) {
-          await claude.connectCode()
-          console.log('Claude Code: connected Klara Wisper (MCP)')
-        }
-        const skills = claude.installSkills()
-        if (skills.length) console.log(`Claude Code skills installed/updated: ${skills.join(', ')}`)
-      })
-      .catch((err) => console.warn('Claude connection check failed', err))
+  // Claude can always read the calls (a dated copy of the old file is kept), and connect a Claude
+  // that was installed since. Claude Code too (the CLI, or the copy inside Claude Desktop), with the
+  // skills. Only while the claudeConnected setting is on, and only after the install wizard, which
+  // makes the first connection itself (and shows it).
+  if (settings.value.claudeConnected && settings.value.onboarded) {
+    void claude.autoConnect().then((r) => r.error && console.warn(`Claude connection: ${r.error}`))
   }
   createTray()
   pillWindow()
@@ -316,6 +329,7 @@ app.on('window-all-closed', () => {
 
 let quitting = false
 app.on('before-quit', (e) => {
+  setup.abort() // a download in progress resumes at the next launch
   if (quitting) return
   if (recorder.live && recorder.live.phase === 'recording') {
     e.preventDefault()

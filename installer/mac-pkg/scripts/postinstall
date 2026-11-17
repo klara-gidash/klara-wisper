@@ -1,0 +1,19 @@
+#!/bin/bash
+# Runs as root after Klara Wisper.app is in /Applications (Klara Wisper.pkg).
+#   1. registers the new copy with Launch Services (Launchpad, Spotlight, "Open with"),
+#   2. opens the app for the person who is logged in, so its install wizard starts by itself.
+# /tmp/klara-wisper-no-launch (used by the CI smoke test) skips step 2.
+APP="/Applications/Klara Wisper.app"
+LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+"$LSREG" -f "$APP" >/dev/null 2>&1 || true
+# Files installed by Installer are not quarantined; clear it anyway in case a copy was dragged in before.
+/usr/bin/xattr -dr com.apple.quarantine "$APP" >/dev/null 2>&1 || true
+
+[ -e /tmp/klara-wisper-no-launch ] && exit 0
+USER_NAME="$(/usr/bin/stat -f%Su /dev/console 2>/dev/null)"
+if [ -z "$USER_NAME" ] || [ "$USER_NAME" = root ] || [ "$USER_NAME" = loginwindow ] || [ "$USER_NAME" = _mbsetupuser ]; then
+  exit 0 # nobody at the screen (a remote or managed install): open it from Launchpad later
+fi
+USER_ID="$(/usr/bin/id -u "$USER_NAME")"
+/bin/launchctl asuser "$USER_ID" /usr/bin/sudo -u "$USER_NAME" /usr/bin/open -a "$APP" >/dev/null 2>&1 || true
+exit 0

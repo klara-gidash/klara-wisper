@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The macOS installer (Klara Wisper.pkg), built by scripts/make-dmg.sh with productbuild.
+  @VERSION@ is replaced by the app's version at build time.
+  Before anything is copied, klaraCheck() stops the install on a Mac that can't run the app
+  (Intel processor, macOS older than 14.4, under 6 GB of memory), with a message in Hebrew and English.
+  The rest of the setup (questions, the version that fits this Mac, downloads, Claude, health check)
+  is the app's own install wizard, which postinstall opens right away.
+-->
+<installer-gui-script minSpecVersion="2">
+  <title>Klara Wisper</title>
+  <organization>io.klara</organization>
+  <options customize="never" require-scripts="false" rootVolumeOnly="true" hostArchitectures="arm64,x86_64"/>
+  <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+  <welcome file="welcome.html" mime-type="text/html"/>
+  <conclusion file="conclusion.html" mime-type="text/html"/>
+  <background-darkAqua file="background.png" alignment="bottomleft" scaling="none" mime-type="image/png"/>
+  <background file="background.png" alignment="bottomleft" scaling="none" mime-type="image/png"/>
+  <installation-check script="klaraCheck()"/>
+  <script>
+  <![CDATA[
+  function fatal(title, message) {
+    my.result.type = 'Fatal';
+    my.result.title = title;
+    my.result.message = message;
+    return false;
+  }
+  function klaraCheck() {
+    if (system.sysctl('hw.optional.arm64') != 1) {
+      return fatal('Klara Wisper צריכה מק עם שבב Apple',
+        'במחשב הזה יש מעבד Intel. Klara Wisper עובדת רק על מק עם שבב Apple (M1 ומעלה).\n\n' +
+        'This Mac has an Intel processor. Klara Wisper needs a Mac with Apple silicon (M1 or later).');
+    }
+    if (system.compareVersions(system.version.ProductVersion, '14.4') < 0) {
+      return fatal('צריך לעדכן את macOS',
+        'Klara Wisper צריכה macOS 14.4 ומעלה. מעדכנים ב: הגדרות המערכת > כללי > עדכון תוכנה, ופותחים את ההתקנה שוב.\n\n' +
+        'Klara Wisper needs macOS 14.4 or later: System Settings > General > Software Update, then open the installer again.');
+    }
+    var mem = system.sysctl('hw.memsize');
+    if (mem && mem < 6 * 1024 * 1024 * 1024) {
+      return fatal('אין מספיק זיכרון',
+        'Klara Wisper צריכה לפחות 8GB זיכרון.\n\nKlara Wisper needs at least 8 GB of memory.');
+    }
+    return true;
+  }
+  ]]>
+  </script>
+  <choices-outline>
+    <line choice="default">
+      <line choice="io.klara.wisper.app"/>
+    </line>
+  </choices-outline>
+  <choice id="default"/>
+  <choice id="io.klara.wisper.app" visible="false">
+    <pkg-ref id="io.klara.wisper.app"/>
+  </choice>
+  <pkg-ref id="io.klara.wisper.app" version="@VERSION@" onConclusion="none">app.pkg</pkg-ref>
+</installer-gui-script>

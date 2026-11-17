@@ -1,6 +1,6 @@
 # Builds the installers on GitHub's machines, installs and starts each one (smoke test), and attaches
 # them to a release:
-#   macOS (Apple Silicon): release/Klara Wisper.dmg       (scripts/make-dmg.sh, then scripts/ci/smoke-mac.sh)
+#   macOS (Apple Silicon): release/Klara Wisper.pkg + .dmg (scripts/make-dmg.sh, then scripts/ci/smoke-mac.sh)
 #   Windows 10/11 x64:     release/Klara Wisper Setup.exe (scripts/make-windows.ps1, then scripts/ci/smoke-windows.ps1)
 # Runs when a tag like v0.1.1 is pushed, or by hand: Actions → "Build installers" → Run workflow.
 # No secrets are used: the builds are unsigned (ad-hoc on the Mac), see docs/INSTALL.he.md.
@@ -52,7 +52,7 @@ jobs:
       # A failure here fails the job, so the installer is not kept and the release job does not run.
       - name: Smoke test the installer
         continue-on-error: false
-        timeout-minutes: 45
+        timeout-minutes: 60
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\ci\smoke-windows.ps1
       - uses: actions/upload-artifact@v6
@@ -74,20 +74,22 @@ jobs:
           node-version: 24
       - name: Install packages
         run: npm ci
-      - name: Build the dmg
+      - name: Build the pkg and the dmg
         run: bash scripts/make-dmg.sh
       # Signature and Electron fuses of the app in the dmg, then a first launch from /Applications:
       # setup (Python, packages, models) and the engine process. Transcription itself is not tested
       # (GitHub's macOS VMs may have no Metal GPU for MLX).
       # A failure here fails the job, so the dmg is not kept and the release job does not run.
-      - name: Smoke test the dmg
+      - name: Smoke test the pkg and the dmg
         continue-on-error: false
-        timeout-minutes: 45
+        timeout-minutes: 55
         run: bash scripts/ci/smoke-mac.sh
       - uses: actions/upload-artifact@v6
         with:
           name: Klara-Wisper-macOS
-          path: release/Klara Wisper.dmg
+          path: |
+            release/Klara Wisper.pkg
+            release/Klara Wisper.dmg
           if-no-files-found: error
 
   release:

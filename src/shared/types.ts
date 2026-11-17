@@ -1,3 +1,5 @@
+import type { FailureKind, Machine, Plan, Problem, Wishes } from './plan'
+
 export type Lang = 'he' | 'en'
 export type Stream = 'mic' | 'system'
 export type MeetingSource =
@@ -156,6 +158,10 @@ export interface Settings {
   claudeConnected: boolean
   /** The microphone the last automatic scan picked (kept across restarts). */
   lastScanMic: string | null
+  /** The models this install needs, chosen by the install wizard (src/shared/plan.ts); null = the default three. */
+  setupModels: string[] | null
+  /** The wizard's answers, kept so a repair or a later check uses the same plan. */
+  wishes: Wishes | null
 }
 
 export interface MicDevice {
@@ -191,6 +197,12 @@ export interface SetupState {
   progress: number // 0..1 within the phase
   detail?: string
   error?: string
+  /** Why it stopped, for a message in plain words; "network" is tried again by itself. */
+  errorKind?: FailureKind
+  /** When the next automatic try starts (ms since 1970), while waiting after a network error. */
+  retryAt?: number
+  /** Automatic tries so far for the current problem. */
+  attempt?: number
   engineMissing?: boolean
   modelsMissing?: string[]
   models?: { key: string; title: string; bytes: number; done: number; state: 'waiting' | 'downloading' | 'verifying' | 'done' }[]
@@ -247,4 +259,57 @@ export const SOURCE_LABEL: Record<MeetingSource, string> = {
   goto: 'GoTo',
   inperson: 'In person',
   other: 'Call'
+}
+
+/** What the install wizard learns about this computer before installing (src/main/preflight.ts). */
+export interface PreflightReport {
+  machine: Machine
+  plan: Plan
+  problems: Problem[]
+  /** Already on this computer (an update or a repair instead of a first install). */
+  installed: { engine: boolean; models: string[] }
+  /** The download servers answered: Python (GitHub), packages (PyPI), models (Hugging Face). */
+  internet: { ok: boolean; unreachable: string[] }
+  /** macOS: the app runs from the disk image or Downloads instead of the Applications folder. */
+  misplaced: boolean
+  claude: { desktopInstalled: boolean; codeCli: boolean }
+}
+
+export interface HealthItem {
+  id: 'app' | 'helper' | 'engine' | 'models' | 'transcribe' | 'microphone' | 'permissions' | 'calendar' | 'claude' | 'storage'
+  status: 'ok' | 'warn' | 'fail' | 'skip' | 'running'
+  /** A short code for the message (strings.ts: health.<id>.<code>). */
+  code?: string
+  /** Extra text shown as is: a number, a name, or the raw error when nothing better is known. */
+  detail?: string
+  ms?: number
+}
+
+export interface HealthReport {
+  at: string
+  ok: boolean
+  items: HealthItem[]
+}
+
+/** The Claude connection as the app made it by itself (src/main/claude.ts: autoConnect). */
+export interface ClaudeAuto {
+  desktopInstalled: boolean
+  desktop: boolean
+  desktopRunning: boolean
+  codeCli: boolean
+  code: boolean
+  skills: number
+  error?: string
+}
+
+/** Google Calendar through its secret iCal link (src/main/googleCalendar.ts). */
+export interface GoogleCalendarState {
+  linked: boolean
+  /** The calendar's name: the user's address for a main calendar. */
+  calendar: string | null
+  lastSync: string | null
+  /** "gcal:notFound"…, when the last fetch failed (the last good copy is still used). */
+  lastError: string | null
+  /** Events in the next 7 days, once the calendar was read. */
+  upcoming: number | null
 }

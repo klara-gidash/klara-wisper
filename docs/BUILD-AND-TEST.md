@@ -34,20 +34,23 @@ Klara Wisper records your calls and transcribes them in Hebrew, plus in-person m
 
 ## 2. Install (users)
 
+The step-by-step guide for colleagues (Hebrew) is [colleagues-install.he.md](colleagues-install.he.md).
+
 ### macOS (Apple Silicon, macOS 14.4+)
-1. Download `Klara Wisper.dmg` from [Releases](https://github.com/klara-gidash/klara-wisper/releases/latest) and drag the app to Applications.
-2. The first open is blocked because the app isn't notarized (there is no Apple Developer account). Go to System Settings → Privacy & Security → **Open Anyway**.
-3. The first-run screen installs the engine (Python and its packages, in `~/Library/Application Support/Klara Wisper`, no admin rights needed) and downloads the models (about 2 GB). It also asks for the permissions, including Automation for every supported browser that is running.
-4. Claude is connected automatically: the MCP server is added to Claude Desktop and Claude Code, and the skills are installed for Claude Code. Restart Claude Desktop once.
+1. Download `Klara Wisper.pkg` from [Releases](https://github.com/klara-gidash/klara-wisper/releases/latest) and double-click it (`Klara Wisper.dmg`, to drag into Applications, is there too).
+2. The first open is blocked because the package isn't signed or notarized (there is no Apple Developer account): click **Done**, then System Settings → Privacy & Security → **Open Anyway**. Apps installed by Installer aren't quarantined, so the app itself opens without a second prompt.
+3. Installer's own check (`installer/mac-pkg/Distribution.xml`) refuses an Intel Mac, macOS older than 14.4 or under 6 GB of memory, with a message in Hebrew and English. `preinstall` quits a running copy (SIGTERM, so a recording in progress is saved); `postinstall` registers the app and opens it for the logged-in user.
+4. The app's **install wizard** (`src/renderer/src/views/Onboarding.tsx`) takes over: it checks the computer (`src/main/preflight.ts`), asks what it's for and which language, picks the plan (`src/shared/plan.ts`), installs the engine and the models (`src/main/setup.ts`: retries network errors, resumes downloads, keeps the computer awake), asks for the permissions, connects Claude Desktop, Claude Code and the skills by itself (with a "restart Claude" button), and runs the health check (`src/main/health.ts`).
 5. For automatic summaries: Settings → Claude → **Sign in to Claude**, once.
 6. For calendar names: add your accounts (Google Workspace, Outlook/Exchange, iCloud) once in System Settings → Internet Accounts, with Calendars ticked. Klara Wisper reads whatever the Calendar app shows.
 
 **Updating to 0.1.1:** the macOS helper was rebuilt, so macOS asks once more for the microphone, system audio, Accessibility and Input Monitoring.
 
 ### Windows 10/11 x64
-1. Download `Klara Wisper Setup.exe` from [Releases](https://github.com/klara-gidash/klara-wisper/releases/latest). It installs per user, with no admin rights.
-2. SmartScreen warns because the installer is unsigned: **More info → Run anyway**.
-3. The first run installs the engine and models the same way, into `%APPDATA%\Klara Wisper`.
+1. Download `Klara Wisper Setup.exe` from [Releases](https://github.com/klara-gidash/klara-wisper/releases/latest). It installs per user in a few seconds, with no admin rights, adds Start menu and desktop shortcuts, and opens the app.
+2. SmartScreen warns because the installer is unsigned: **More info → Run anyway**. The installer refuses 32-bit Windows and anything older than Windows 10 (`installer/windows/installer.nsh`).
+3. The same install wizard runs, installing into `%APPDATA%\Klara Wisper`. When Microsoft's Visual C++ runtime (needed by PyTorch and CTranslate2) is missing or older than 14.30, the app downloads `vc_redist.x64.exe` from Microsoft, checks that Microsoft signed it, and runs it; Windows asks once for permission.
+4. Uninstalling (Settings → Apps, or Klara Wisper → Settings → Remove) runs `Klara Wisper.exe --cleanup` first (Claude connection, skills, login item, the engine Claude may have started), then deletes `%APPDATA%\Klara Wisper`. Transcripts in Documents stay.
 
 > **Windows status:** the helper compiles and the installer is built and smoke-tested on GitHub Actions (see §3 and §4). It has **not yet been tried on a real Windows PC**. Its limits:
 > - no calendar yet, so calls are named by app or tab;
@@ -64,7 +67,7 @@ Klara Wisper records your calls and transcribes them in Hebrew, plus in-person m
 bash scripts/setup.sh          # first time: Node + uv into ~/.local, the engine, models, the helper, the app
 bash scripts/dist.sh           # rebuild and install /Applications/Klara Wisper.app
 SKIP_HELPER=1 bash scripts/dist.sh   # same, but keep the signed helper, so macOS keeps its permissions
-bash scripts/make-dmg.sh       # release/Klara Wisper.dmg for other people (doesn't touch the installed app)
+bash scripts/make-dmg.sh       # release/Klara Wisper.pkg + .dmg for other people (doesn't touch the installed app)
 ```
 
 ### On Windows
@@ -84,12 +87,12 @@ Each installer is smoke-tested before it is kept (§4). It uses no secrets.
 ### Automated (about a minute, no models loaded)
 ```bash
 npm run typecheck                      # both TypeScript projects
-npm test                               # 98 unit tests: 71 call detection, 14 calls in a row, 13 Obsidian/notes
+npm test                               # 114 unit tests: 71 call detection, 14 calls in a row, 13 Obsidian/notes, 16 install plan
 npm run test:detector                  # only the 71 detection cases
 node --test cloudflare/test/           # 15 cases for the Cloudflare gateway (auth, upload, MCP tools, limits)
 engine/.venv/bin/python -m py_compile engine/klara_engine/*.py
 ```
-`npm test` runs `node --test test/*.test.mts`: `detector.test.mts` (apps, browsers, web tabs, Windows names and titles, timing, blips, not-a-call apps), `calls.test.mts` (the call controller with fake recorder and detector) and `obsidian.test.mts` (front matter, note names, the vault path check).
+`npm test` runs `node --test test/*.test.mts`: `detector.test.mts` (apps, browsers, web tabs, Windows names and titles, timing, blips, not-a-call apps), `calls.test.mts` (the call controller with fake recorder and detector), `obsidian.test.mts` (front matter, note names, the vault path check) and `plan.test.mts` (which version each computer gets, what blocks an install, how download errors are classified).
 
 The full engine tests load the real models (several GB of memory):
 ```bash
@@ -103,8 +106,8 @@ Runs on every push and pull request to `main`, with a read-only token and no sec
 
 ### Installer smoke tests (`.github/workflows/installers.yml`)
 Runs on a `v*` tag or by hand. Each build job installs and starts what it built; a failure fails the job, so nothing is attached:
-- **mac** (`scripts/ci/smoke-mac.sh`): mounts the dmg, `codesign --verify --deep --strict`, checks that the Electron fuses are locked, copies the app to `/Applications`, launches it and follows `main.log` until the first-run setup (Python, packages, models) completes and the engine process starts. Transcription itself isn't tested (GitHub's macOS VMs may have no Metal GPU).
-- **windows** (`scripts/ci/smoke-windows.ps1`): silent per-user install, first launch, follows `main.log` through the first-run setup until the engine process runs, then uninstalls.
+- **mac** (`scripts/ci/smoke-mac.sh`): mounts the dmg, `codesign --verify --deep --strict`, checks that the Electron fuses are locked, installs `Klara Wisper.pkg` with `sudo installer` (its installation check and scripts run; the app must not be quarantined), launches it with `--health-check` and follows `main.log` until the first-run setup (Python, packages, models) completes and the engine process starts, then reads `health.json`: the app, helper, models and storage must pass. The engine and the sample transcription are only warnings there (GitHub's macOS VMs may have no Metal GPU).
+- **windows** (`scripts/ci/smoke-windows.ps1`): silent per-user install, first launch with `--health-check`, follows `main.log` through the first-run setup until the engine process runs, then requires the health check's app, helper, engine, models, sample transcription (a Hebrew sentence, on the CPU) and storage to pass. Then uninstalls and checks that the data folder is gone.
 - **release**: the only job with write access; it runs only when every build that ran passed its smoke test.
 
 The smoke scripts replace the installed app and its settings, so they refuse to run outside GitHub Actions unless `KLARA_SMOKE_FORCE=1` (use a throwaway machine).

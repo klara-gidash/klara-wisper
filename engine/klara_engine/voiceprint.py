@@ -49,11 +49,11 @@ class VoiceprintStore:
         self.path = path
         self.items: dict[str, dict] = {}
         if path.exists():
-            self.items = json.loads(path.read_text())
+            self.items = json.loads(path.read_text(encoding="utf-8"))
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self.items, ensure_ascii=False))
+        self.path.write_text(json.dumps(self.items, ensure_ascii=False), encoding="utf-8")
 
     def put(self, key: str, name: str, embedding: np.ndarray, is_me: bool = False) -> None:
         old = self.items.get(key)

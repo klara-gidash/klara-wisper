@@ -1,10 +1,13 @@
-import { clipboard, dialog, ipcMain, shell } from 'electron'
+import { app, clipboard, dialog, ipcMain, shell } from 'electron'
 import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { AppState, Attendee, CalendarEvent, FollowUp, MeetingMeta, Permissions, Settings } from '@shared/types'
+import type { AppState, Attendee, CalendarEvent, FollowUp, HealthReport, MeetingMeta, Permissions, Settings } from '@shared/types'
+import { recommend, type Use, type Wishes } from '@shared/plan'
 import { toMarkdown } from '@shared/transcript'
 import { audio } from './audio'
+import { matchPastMeetings } from './backfill'
 import { eventsBetween, requestCalendar, upcoming } from './calendar'
+import { connectGoogle, disconnectGoogle, googleLinked, googleState } from './googleCalendar'
 import * as claude from './claude'
 import { engine } from './engine'
 import { helper } from './helper'
@@ -15,7 +18,10 @@ import { dictation } from './dictation'
 import { explainMicDenied, isMicDenied } from './micPermission'
 import { isAppUrl, safeExternal } from './security'
 import { settings } from './settings'
-import { setup } from './setup'
+import { engineInstalled, setup } from './setup'
+import { healthText, runHealth } from './health'
+import { machine, preflight } from './preflight'
+import { removeApp, stopEngineProcesses } from './uninstall'
 import { asrChoices, selectAsr, selectLanguage } from './models'
 import { checkCloud, cloudState, configureCloud, deleteCloud, forgetCloud, syncAllCloud } from './cloud'
 import { disableObsidian, enableObsidian, exportAllObsidian, obsidianState, pickObsidianVault } from './obsidian'
@@ -25,6 +31,15 @@ import { readMeeting, renameMeetingFolder, writeMeeting, writeMeta } from './sto
 import { broadcast, hideLive, showLibrary, showLive } from './windows'
 
 let permissions: Permissions | null = null
+let lastHealth: HealthReport | null = null
+
+/** The wizard's answers, checked: only the known uses and languages get through. */
+function cleanWishes(raw: unknown): Wishes {
+  const r = (raw ?? {}) as Partial<Wishes>
+  const known: Use[] = ['dictation', 'calls', 'inperson']
+  const uses = Array.isArray(r.uses) ? known.filter((u) => (r.uses as unknown[]).includes(u)) : []
+  return { uses: uses.length ? uses : known, language: r.language === 'auto' ? 'auto' : 'he', accurate: r.accurate === true }
+}
 
 /** The Claude connection (MCP) reads upcoming events from this file instead of touching the calendar. */
 export function cacheUpcoming(events: CalendarEvent[]): void {
@@ -205,7 +220,57 @@ export function registerIpc(detector: Detector): void {
   }
 
   handle('state', () => appState())
+
+  // The install wizard: look at the computer, settle the plan, install, check that it all works.
+  handle('preflight:run', (wishes?: unknown) => preflight(wishes === undefined || wishes === null ? null : cleanWishes(wishes), engineInstalled()))
   handle('setup:run', () => void setup.run())
+  // Python and the packages are the same for every plan: they start while the wizard still asks.
+  handle('setup:engine', () => void setup.run({ engineOnly: true }))
+  handle('setup:plan', async (raw: unknown) => {
+    const wishes = cleanWishes(raw)
+    const plan = recommend(await machine(), wishes)
+    settings.update({
+      wishes,
+      setupModels: plan.models,
+      asrLanguage: plan.language,
+      asrModel: plan.asr === 'whisper-ivrit-turbo' || plan.asr === 'whisper-ivrit-turbo-ct2' ? null : plan.asr,
+      diarizeRemote: plan.diarizeRemote,
+      autoRecord: plan.autoRecord
+    })
+    console.log(`install plan: ${plan.tier}, ${plan.models.join(' + ')}, language ${plan.language}`)
+    setup.refresh()
+    void setup.run()
+    return plan
+  })
+  handle('setup:retry', () => (setup.state.running ? setup.kick() : void setup.run()))
+  // "Repair": stop everything that runs from the engine folder (the engine, and the MCP server
+  // Claude started, which Windows would keep locked), then rebuild it; a model whose files failed
+  // their checksum at load is downloaded again. Never during a recording.
+  handle('setup:repair', async () => {
+    if (recorder.live) throw new Error('a recording is in progress')
+    const bad = [...engine.lastErrors.matchAll(/model file ([\w.-]+)\/\S+ does not match/g)].map((m) => m[1])
+    engine.stop()
+    await stopEngineProcesses()
+    engine.lastErrors = ''
+    void setup.repair([...new Set(bad)]).finally(() => {
+      if (setup.state.phase === 'error') engine.restart() // the repair stopped half-way: bring back what still works
+    })
+  })
+  handle('health:run', async () => {
+    lastHealth = await runHealth((items) => broadcast('health', items))
+    return lastHealth
+  })
+  handle('health:copy', async () => {
+    lastHealth ??= await runHealth()
+    clipboard.writeText(await healthText(lastHealth))
+  })
+  // macOS: the app was opened from the disk image or Downloads; put it where apps live and reopen it.
+  handle('app:moveToApplications', () => {
+    if (process.platform !== 'darwin' || !app.isPackaged) return false
+    return app.moveToApplicationsFolder({ conflictHandler: (type) => type === 'exists' })
+  })
+  handle('app:quit', () => app.quit())
+  handle('app:remove', () => removeApp())
   handle('settings:set', (patch: Partial<Settings>) => settings.update(cleanPatch(patch)))
 
   // Library
@@ -306,10 +371,23 @@ export function registerIpc(detector: Detector): void {
     const events = all.filter((e) => shown.has(e.calendar))
     if (!offsetDays) cacheUpcoming(events) // what Claude's list_upcoming_meetings reads
     const calendars = names.map((name) => ({ name, color: all.find((e) => e.calendar === name)?.color ?? null, shown: shown.has(name) }))
-    return { events, calendars }
+    return { events, calendars, google: googleLinked() }
   })
   // System Settings > Internet Accounts, where a Google (Workspace) calendar is added to the Mac.
   handle('calendar:openAccounts', () => shell.openExternal('x-apple.systempreferences:com.apple.Internet-Accounts-Settings.extension'))
+  // Google Calendar through its secret iCal link (no sign-in, no admin). A new link looks past calls up again.
+  handle('gcal:state', () => googleState())
+  handle('gcal:connect', async (link: string) => {
+    const state = await connectGoogle(String(link ?? ''))
+    broadcast('calendar:changed', null)
+    void matchPastMeetings().catch((err) => console.warn('calendar look-up of past calls failed', err))
+    return state
+  })
+  handle('gcal:disconnect', () => {
+    const state = disconnectGoogle()
+    broadcast('calendar:changed', null)
+    return state
+  })
   handle('followups:list', () => followUps())
   handle('followups:compose', (id: string) => {
     const url = followUpUrl(id)
@@ -373,6 +451,17 @@ export function registerIpc(detector: Detector): void {
   handle('obsidian:disable', () => disableObsidian())
   handle('obsidian:exportAll', () => exportAllObsidian())
   handle('claude:status', () => claude.status())
+  // The wizard connects Claude by itself (Desktop, Code and the skills); "don't connect" undoes it.
+  handle('claude:auto', async () => {
+    if (!settings.value.claudeConnected) settings.update({ claudeConnected: true })
+    return claude.autoConnect()
+  })
+  handle('claude:disconnect', async () => {
+    settings.update({ claudeConnected: false })
+    await claude.disconnect()
+    return claude.status()
+  })
+  handle('claude:restart', () => claude.restartDesktop())
   // The automatic summaries need the Claude Code CLI signed in (Settings > Claude).
   handle('claude:auth', async () => {
     const cli = claude.claudeCli()

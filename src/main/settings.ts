@@ -33,6 +33,8 @@ export const defaults: Settings = {
   claudePush: 'off',
   claudeConnected: true,
   lastScanMic: null,
+  setupModels: null,
+  wishes: null,
   launchAtLogin: false,
   onboarded: false
 }

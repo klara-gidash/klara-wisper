@@ -20,6 +20,8 @@ export class Engine extends EventEmitter {
   private queue: string[] = []
   private restarts = 0
   private stopping = false
+  /** The end of what the engine last wrote to stderr (why it failed to start, a missing DLL…). */
+  lastErrors = ''
   status: EngineStatus = { state: 'starting' }
 
   start(): void {
@@ -49,6 +51,7 @@ export class Engine extends EventEmitter {
         KLARA_MODELS_DIR: modelsDir,
         HF_HUB_OFFLINE: '1',
         TOKENIZERS_PARALLELISM: 'false',
+        PYTHONUTF8: '1', // Windows: read and write text as UTF-8 whatever the system's code page is
         ...(asrChoice() ? { KLARA_ASR_MODEL: asrChoice()! } : {}), // Settings > transcription model
         KLARA_ASR_LANGUAGE: settings.value.asrLanguage === 'auto' ? 'auto' : 'he'
       },
@@ -68,7 +71,9 @@ export class Engine extends EventEmitter {
     })
     proc.stderr!.on('data', (d) => {
       const s = String(d)
-      if (!/Warning|warn\(|redirects|Loading weights/i.test(s)) console.warn(`[engine] ${s.trim()}`)
+      if (/Warning|warn\(|redirects|Loading weights/i.test(s)) return
+      console.warn(`[engine] ${s.trim()}`)
+      this.lastErrors = (this.lastErrors + s).slice(-2000) // for the health check's report
     })
     proc.on('exit', (code) => {
       this.ws = null
@@ -121,7 +126,10 @@ export class Engine extends EventEmitter {
           voiceprintKeys: msg.voiceprintKeys
         })
       }
-      if (msg.type === 'error') console.error(`[engine] ${msg.message}`)
+      if (msg.type === 'error') {
+        console.error(`[engine] ${msg.message}`)
+        this.lastErrors = `${this.lastErrors}\n${msg.message}`.slice(-2000)
+      }
       this.emit('message', msg)
       this.emit(msg.type, msg)
     }

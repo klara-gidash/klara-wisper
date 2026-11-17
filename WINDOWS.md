@@ -33,7 +33,7 @@ The app talks to the helper exactly as on the Mac: one JSON object per line on s
 | Paste | clipboard + ⌘V | clipboard + `SendInput` Ctrl+V, previous clipboard text restored |
 | Front app (for the dictation log) | NSWorkspace | `GetForegroundWindow` → process name |
 | Audio file (`audio.m4a`) | AVAudioFile AAC | Media Foundation AAC encoder (`MediaFoundationEncoder.EncodeToAac`) |
-| Calendar | EventKit | not available yet (status `unsupported`); recordings are named by app/tab |
+| Calendar | EventKit | the helper reports `unsupported`; the app reads Google Calendar directly through its secret iCal link (`src/main/googleCalendar.ts`), set up in the install wizard or in Settings |
 | Permissions | TCC | only the microphone privacy switch (`ms-settings:privacy-microphone`) |
 | "Only serve the app" | code-signature check of the parent chain | parent process must be `Klara Wisper.exe` two folders up from the helper |
 
@@ -90,11 +90,18 @@ Timing is the same as on the Mac: most calls after 3 s on the mic, chat apps (Wh
 - [ ] Settings → Claude → connect → Claude Desktop on Windows lists the tools
 - [ ] Obsidian export writes notes into a vault on a Windows path
 
+### Install (since 0.1.2)
+
+- The one-click installer (`installer/windows/installer.nsh`) refuses 32-bit Windows and Windows older than 10, adds Start menu and desktop shortcuts, and opens the app, whose install wizard takes over (the same one as on the Mac).
+- The wizard installs Microsoft's Visual C++ runtime when it is missing or older than 14.30 (PyTorch and CTranslate2 need it): `vc_redist.x64.exe` from Microsoft's permanent link, checked for Microsoft's Authenticode signature, run with `/install /quiet /norestart`; Windows asks once for permission. If that is refused, the health check names the missing part and links to it.
+- The Microsoft Store build of Claude Desktop keeps its config under `%LOCALAPPDATA%\Packages\Claude_…\LocalCache\Roaming\Claude`; the connection is written there too.
+- Uninstall runs `Klara Wisper.exe --cleanup` (Claude connection, skills, login item, any engine process Claude started) and deletes `%APPDATA%\Klara Wisper`.
+
 ## Known limits on Windows (first version)
 
 - Not tried on a real PC yet: the helper and the installer have only been built and smoke-tested on GitHub Actions.
 - Loopback records everything the PC plays, not only the call app (no per-process capture like the Mac tap; Windows 10 2004+ has process loopback, a possible later step).
-- No calendar names. Outlook/Graph would need an account connection.
+- Calendar names come only from Google Calendar (its secret iCal link). Outlook/Graph would need an account connection.
 - Automatic summaries run on the Mac only for now (`src/main/summarize.ts`). Push to Claude on Windows therefore only fires when "automatic summary" is switched off in Settings.
 - Browser calls are recognised by the window title of the active tab only, and only for the sites listed above.
 - CPU transcription is slower than MLX on an M-series Mac; a PC with an NVIDIA GPU can use CUDA (`KLARA_ASR_DEVICE=cuda`, needs the CUDA 12 runtime DLLs).

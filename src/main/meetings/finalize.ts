@@ -2,7 +2,7 @@ import { Notification } from 'electron'
 import { existsSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { MeetingMeta, RecordingMode, Segment, SpeakerInfo } from '@shared/types'
-import { MATCH_VERSION, matchEvent } from '../calendar'
+import { matchEvent, matchVersion } from '../calendar'
 import { engine } from '../engine'
 import { helper } from '../helper'
 import { settings } from '../settings'
@@ -77,7 +77,7 @@ class Finalizer {
         }
       }
       // No event: an ad-hoc call or in person. The automatic summary names it (MCP set_meeting_details).
-      meta.calendarChecked = MATCH_VERSION
+      meta.calendarChecked = matchVersion()
     }
     meta.speakers = speakers
     meta.languages = [...new Set(segments.map((s) => s.lang))]

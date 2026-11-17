@@ -67,9 +67,16 @@ export function Home({ onOpen, go, onSearch }: { onOpen: (id: string) => void; g
   const [, tick] = useState(0)
 
   const [calendars, setCalendars] = useState<{ name: string; color: string | null; shown: boolean }[]>([])
+  const [google, setGoogle] = useState(false)
   const [picking, setPicking] = useState(false)
   // The helper's permission report can lag behind; events coming back is proof enough.
-  const calendarGranted = app?.permissions?.calendar === 'granted' || calendars.length > 0
+  const calendarGranted = app?.permissions?.calendar === 'granted' || calendars.length > 0 || google
+  // No Mac calendar on Windows: the calendar comes from Google Calendar's link (Settings).
+  const isMac = app?.platform !== 'win32'
+  const openGoogleSettings = (): void => {
+    go('settings')
+    setTimeout(() => document.getElementById('google-calendar')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250)
+  }
   const [connecting, setConnecting] = useState(false)
   const [blocked, setBlocked] = useState(false)
   const calendarBlocked = !calendarGranted && (blocked || app?.permissions?.calendar === 'denied')
@@ -105,10 +112,11 @@ export function Home({ onOpen, go, onSearch }: { onOpen: (id: string) => void; g
     void invoke<FollowUp[]>('followups:list').then(setFollowUps, () => setFollowUps([]))
   }
   const loadEvents = (): void => {
-    void invoke<{ events: CalendarEvent[]; calendars: typeof calendars }>('calendar:days', page * PAGE_DAYS, PAGE_DAYS).then(
+    void invoke<{ events: CalendarEvent[]; calendars: typeof calendars; google?: boolean }>('calendar:days', page * PAGE_DAYS, PAGE_DAYS).then(
       (r) => {
         setEvents(r.events)
         if (r.calendars.length) setCalendars(r.calendars)
+        setGoogle(!!r.google)
       },
       () => setEvents([])
     )
@@ -116,6 +124,7 @@ export function Home({ onOpen, go, onSearch }: { onOpen: (id: string) => void; g
   useEffect(loadMeetings, [])
   useEffect(loadEvents, [page, app?.permissions?.calendar, app?.settings.calendars])
   useEvent('meetings:changed', loadMeetings)
+  useEvent('calendar:changed', loadEvents)
   // Keep "Now" and the list fresh while the window stays open.
   useEffect(() => {
     const timer = setInterval(() => {
@@ -205,11 +214,15 @@ export function Home({ onOpen, go, onSearch }: { onOpen: (id: string) => void; g
             <div className="flex-1">
               <div className="text-[14px] font-semibold">{t('home.connectCalendar')}</div>
               <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-2">
-                {calendarBlocked ? t('home.calendarBlocked') : t('home.connectCalendarBody')}
+                {!isMac ? t('home.connectGoogleBody') : calendarBlocked ? t('home.calendarBlocked') : t('home.connectCalendarBody')}
               </div>
             </div>
             <div className="flex shrink-0 flex-col gap-1.5">
-              {calendarBlocked ? (
+              {!isMac ? (
+                <Button variant="primary" size="sm" onClick={openGoogleSettings}>
+                  {t('home.connectGoogle')}
+                </Button>
+              ) : calendarBlocked ? (
                 <>
                   <Button variant="primary" size="sm" onClick={() => void checkCalendar()}>
                     {t('home.calendarCheck')}
@@ -235,9 +248,17 @@ export function Home({ onOpen, go, onSearch }: { onOpen: (id: string) => void; g
             {events === null ? '…' : (
               <>
                 {t('home.noUpcoming')}
-                <button onClick={() => void invoke('calendar:openAccounts')} className="mt-1 block w-full text-[12.5px] text-accent hover:underline">
-                  {t('home.addGoogle')}
-                </button>
+                {isMac ? (
+                  <button onClick={() => void invoke('calendar:openAccounts')} className="mt-1 block w-full text-[12.5px] text-accent hover:underline">
+                    {t('home.addGoogle')}
+                  </button>
+                ) : (
+                  !google && (
+                    <button onClick={openGoogleSettings} className="mt-1 block w-full text-[12.5px] text-accent hover:underline">
+                      {t('home.connectGoogle')}
+                    </button>
+                  )
+                )}
               </>
             )}
           </div>

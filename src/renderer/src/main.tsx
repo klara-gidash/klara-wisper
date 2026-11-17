@@ -3,6 +3,7 @@ import { StrictMode, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { initReactI18next } from 'react-i18next'
 import { en, he } from './lib/strings'
+import { wizEn, wizHe } from './lib/wizardStrings'
 import { useAppState } from './lib/api'
 import { Library } from './views/Library'
 import { Live } from './views/Live'
@@ -10,7 +11,7 @@ import { Pill } from './views/Pill'
 import './styles.css'
 
 void i18n.use(initReactI18next).init({
-  resources: { he: { translation: he }, en: { translation: en } },
+  resources: { he: { translation: { ...he, ...wizHe } }, en: { translation: { ...en, ...wizEn } } },
   lng: 'he',
   fallbackLng: 'he',
   interpolation: { escapeValue: false }

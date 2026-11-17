@@ -3,9 +3,11 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { HotkeyName, MeetingSource, Settings as SettingsT } from '@shared/types'
 import { SOURCE_LABEL } from '@shared/types'
+import { GoogleCalendarSection } from '../components/GoogleCalendarSection'
 import { IntegrationsSection } from '../components/IntegrationsSection'
 import { PermissionList } from '../components/Permissions'
 import { SetupProgress } from '../components/SetupProgress'
+import { HealthPanel } from '../components/HealthPanel'
 import { Button, Card, cn, Segmented, Spinner, Toggle } from '../components/ui'
 import { VoiceEnroll } from '../components/VoiceEnroll'
 import { invoke, setSettings, useAppState } from '../lib/api'
@@ -321,6 +323,12 @@ export function Settings() {
         </Row>
       </Section>
 
+      <div id="google-calendar" className="scroll-mt-6">
+        <Section title={t('gcal.title')}>
+          <GoogleCalendarSection />
+        </Section>
+      </div>
+
       <Section title={t('set.microphone')}>
         <Row label={t('set.micChoice')} hint={app.mic.auto ? t('set.micAutoHint', { name: app.mic.currentName ?? '—' }) : undefined}>
           <select
@@ -434,6 +442,13 @@ export function Settings() {
         </div>
       </Section>
 
+      <Section title={t('wiz.healthTitle')}>
+        <div className="p-4">
+          <div className="mb-3 text-[12.5px] leading-relaxed text-ink-2">{t('wiz.healthBody')}</div>
+          <HealthPanel />
+        </div>
+      </Section>
+
       <Section title={t('set.engine')}>
         {(app.setup.needed || app.setup.running) && (
           <div className="p-3">
@@ -499,6 +514,11 @@ export function Settings() {
         <Row label="NVIDIA Nemotron-3-Diarization" hint={t('set.diarHint')}>
           <span className="text-[12.5px] text-ink-2">{app.engine.diarization ? t('engine.ready') : '—'}</span>
         </Row>
+        {app.platform !== 'linux' && (
+          <Row label={t('wiz.removeApp')} hint={t('wiz.removeAppHint')}>
+            <Button size="sm" variant="danger" onClick={() => void invoke('app:remove').catch((err) => window.alert(String(err)))}>{t('wiz.remove')}</Button>
+          </Row>
+        )}
         <Row label={t('set.restartHelper')}>
           <Button size="sm" variant="ghost" icon={<RefreshCw size={13} />} onClick={() => void invoke('permissions:get')}>{t('set.refresh')}</Button>
         </Row>

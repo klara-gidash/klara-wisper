@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { CalendarEvent, MeetingSource } from '@shared/types'
+import { mergeEvents } from '@shared/ical'
+import { googleEvents, googleLinked } from './googleCalendar'
 import { helper } from './helper'
 import { settings } from './settings'
 
@@ -35,13 +37,16 @@ export async function requestCalendar(): Promise<string> {
  */
 const plainIso = (d: Date): string => d.toISOString().replace(/\.\d{3}Z$/, 'Z')
 
+/** The Mac calendar's events and, when its link is saved, Google Calendar's (counted once when both have them). */
 export async function eventsBetween(from: Date, to: Date): Promise<CalendarEvent[]> {
-  try {
-    const r = await helper.request('calendarEvents', { from: plainIso(from), to: plainIso(to) })
-    return r.events ?? []
-  } catch {
-    return []
-  }
+  const [mac, google] = await Promise.all([
+    helper.request('calendarEvents', { from: plainIso(from), to: plainIso(to) }).then(
+      (r) => (r.events ?? []) as CalendarEvent[],
+      () => []
+    ),
+    googleEvents(from, to).catch(() => [])
+  ])
+  return google.length ? mergeEvents(mac, google) : mac
 }
 
 export async function upcoming(hours = 36): Promise<CalendarEvent[]> {
@@ -68,6 +73,12 @@ function zoomId(url?: string): string | null {
 
 /** Bumped when the matching below gets better, so the past-calls pass looks everything up again. */
 export const MATCH_VERSION = 4
+
+/**
+ * What a meeting's `calendarChecked` records: the matching version, and whether Google Calendar's
+ * link took part. Saving (or removing) the link looks the past calls up once more.
+ */
+export const matchVersion = (): number => (googleLinked() ? MATCH_VERSION * 10 + 1 : MATCH_VERSION)
 
 /**
  * The calendar event this recording belongs to:

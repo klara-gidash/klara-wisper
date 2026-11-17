@@ -2,11 +2,14 @@
 # Smoke test of the macOS disk image on a CI machine (GitHub Actions macos-15, Apple Silicon):
 #   1. mounts release/Klara Wisper.dmg, checks the app's signature and that its Electron fuses are
 #      locked (RunAsNode disabled),
-#   2. copies the app to /Applications and marks onboarding as done, so the first launch runs the
-#      setup by itself (src/main/setup.ts: Python, the locked packages, the models),
+#   2. installs release/Klara Wisper.pkg with macOS's Installer (as a colleague does; its
+#      installation check, preinstall and postinstall scripts run), or copies the app from the dmg when
+#      there is no pkg, and marks onboarding as done, so the first launch runs the setup by itself
+#      (src/main/setup.ts: Python, the locked packages, the models),
 #   3. starts the app binary and follows ~/Library/Application Support/Klara Wisper/main.log until
 #      setup is complete and the engine process (python -m klara_engine.server) has started,
-#   4. always prints main.log, then quits the app.
+#   4. runs the app's health check (--health-check, src/main/health.ts) and prints its report,
+#   5. always prints main.log, then quits the app.
 # GitHub's macOS VMs may have no Metal GPU for MLX, so only the engine PROCESS has to start; whether
 # it can transcribe is not tested. An engine that exits is a warning here, unless its log shows a
 # Python import error (a broken package set), which fails the test.
@@ -23,6 +26,8 @@ fi
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DMG="$ROOT/release/Klara Wisper.dmg"
+PKG="$ROOT/release/Klara Wisper.pkg"
+HEALTH_MINUTES="${HEALTH_MINUTES:-8}"
 APP="/Applications/Klara Wisper.app"
 BIN="$APP/Contents/MacOS/Klara Wisper"
 DATA="$HOME/Library/Application Support/Klara Wisper"
@@ -89,24 +94,38 @@ echo "$fuses"
 [[ "$fuses" == *"RunAsNode is Disabled"* ]] || fail "the Electron fuses are not locked (RunAsNode is not Disabled)"
 echo "ok: RunAsNode is Disabled"
 
-# 2. Install into /Applications, the way a colleague does.
+# 2. Install into /Applications, the way a colleague does: with the pkg when there is one.
 if [ -w /Applications ]; then SUDO=""; else SUDO="sudo"; fi
 $SUDO rm -rf "$APP"
-$SUDO ditto "$SRC" "$APP"
 hdiutil detach "$MNT" -quiet || hdiutil detach "$MNT" -force -quiet || true
 MOUNTED=""
+if [ -f "$PKG" ]; then
+  touch /tmp/klara-wisper-no-launch # postinstall: don't open the app (this script starts it below)
+  sudo installer -pkg "$PKG" -target / -verboseR || fail "the Installer failed on $PKG"
+  rm -f /tmp/klara-wisper-no-launch
+  pkgutil --pkg-info io.klara.wisper.app || fail "the pkg receipt io.klara.wisper.app is missing"
+  codesign --verify --deep --strict "$APP" || fail "codesign --verify failed for the app the pkg installed"
+  [ -z "$(xattr -p com.apple.quarantine "$APP" 2>/dev/null)" ] || fail "the app the pkg installed is quarantined"
+  echo "ok: installed with $PKG"
+else
+  hdiutil attach -nobrowse -noautoopen -readonly -mountpoint "$MNT" "$DMG" >/dev/null && MOUNTED=1
+  $SUDO ditto "$SRC" "$APP"
+  hdiutil detach "$MNT" -quiet || hdiutil detach "$MNT" -force -quiet || true
+  MOUNTED=""
+  echo "ok: copied to $APP (no pkg)"
+fi
 [ -x "$BIN" ] || fail "no app binary at $BIN"
-echo "ok: copied to $APP"
 
 # 3. Onboarding done: the first launch installs the engine and the models by itself.
 mkdir -p "$DATA"
 chmod 700 "$DATA"
 [ -f "$LOG" ] && mv -f "$LOG" "$LOG.before-smoke"
+rm -f "$DATA/health.json"
 printf '%s\n' "$SETTINGS" >"$DATA/settings.json"
 
 # 4. Start the app binary and follow main.log.
 echo "== starting $BIN"
-"$BIN" >"$WORK/app.out" 2>&1 &
+"$BIN" --health-check >"$WORK/app.out" 2>&1 &
 APP_PID=$!
 start=$(date +%s)
 saw_started=0
@@ -179,3 +198,21 @@ if [ -z "$engine_note" ] && grep -q 'engine exited' <<<"$log"; then
   grep -q -E 'ModuleNotFoundError|ImportError|SyntaxError' <<<"$log" && fail "the engine exited with a Python import error (see main.log)"
   echo "::warning::the engine process started but exited (no Metal GPU on this VM?): $(grep -m1 'engine exited' <<<"$log")"
 fi
+
+# 8. The health check (--health-check): the app, its helper and the models must pass. The engine and
+# the sample transcription need Metal, which GitHub's macOS VMs may not have: a warning there.
+# The microphone, permissions and Claude can't pass on a CI machine and are only printed.
+echo "== waiting for the health check"
+for _ in $(seq 1 $((HEALTH_MINUTES * 12))); do [ -f "$DATA/health.json" ] && break; sleep 5; done
+[ -f "$DATA/health.json" ] || fail "no health.json $HEALTH_MINUTES minutes after the engine started"
+cat "$DATA/health.json"
+status_of() { /usr/bin/python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next((i["status"] for i in d["items"] if i["id"]==sys.argv[2]), "missing"))' "$DATA/health.json" "$1"; }
+for item in app helper models storage; do
+  s="$(status_of "$item")"
+  [ "$s" = ok ] || fail "health check: $item is $s"
+  echo "ok: health $item"
+done
+for item in engine transcribe; do
+  s="$(status_of "$item")"
+  if [ "$s" = ok ]; then echo "ok: health $item"; else echo "::warning::health check: $item is $s (no Metal GPU on this VM?)"; fi
+done

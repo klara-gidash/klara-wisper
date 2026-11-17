@@ -3,14 +3,17 @@
 #   2. marks onboarding as done, so the first launch runs the setup by itself (src/main/setup.ts),
 #   3. starts the app and follows %APPDATA%\Klara Wisper\main.log until Python, the locked packages
 #      and the models are installed and the engine process (python -m klara_engine.server) runs,
-#   4. always prints main.log, then quits the app and uninstalls it.
+#   4. runs the app's health check (--health-check, src/main/health.ts): the engine must load the
+#      Hebrew model and transcribe a Hebrew sentence on the processor,
+#   5. always prints main.log, then quits the app and uninstalls it (and checks the uninstall cleaned up).
 # Exit code 0 = passed. From the repo root, after scripts\make-windows.ps1:
 #   pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\ci\smoke-windows.ps1
 # It overwrites %APPDATA%\Klara Wisper\settings.json and uninstalls the app, so it refuses to run
 # outside GitHub Actions unless KLARA_SMOKE_FORCE=1 (use a throwaway PC or VM).
 param(
   [int]$SetupMinutes = 25,  # Python + packages + models (about 2 GB) on a fresh machine
-  [int]$EngineMinutes = 5   # from the end of setup until the engine process shows up
+  [int]$EngineMinutes = 5,  # from the end of setup until the engine process shows up
+  [int]$HealthMinutes = 12  # the engine's first start on a CI processor, then the sample transcription
 )
 $ErrorActionPreference = 'Stop'
 
@@ -28,6 +31,7 @@ $Uninstaller = Join-Path $InstallDir 'Uninstall Klara Wisper.exe'
 $DataDir = Join-Path $env:APPDATA 'Klara Wisper'
 $LogFile = Join-Path $DataDir 'main.log'
 $Stamp = Join-Path $DataDir 'engine\installed.json'
+$HealthFile = Join-Path $DataDir 'health.json'
 $Models = @('whisper-ivrit-turbo-ct2', 'nemotron-diarization', 'ecapa') # DEFAULT_MODELS on Windows (src/main/setup.ts)
 # "setup failed" is the first-run setup (setup.ts); "helper setup failed" (index.ts, e.g. a hotkey
 # the CI machine refuses) is not fatal.
@@ -111,11 +115,12 @@ try {
   # 3. Onboarding done: the first launch installs the engine and the models by itself.
   New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
   if (Test-Path -LiteralPath $LogFile) { Move-Item -Force -LiteralPath $LogFile -Destination "$LogFile.before-smoke" }
+  if (Test-Path -LiteralPath $HealthFile) { Remove-Item -Force -LiteralPath $HealthFile }
   [IO.File]::WriteAllText((Join-Path $DataDir 'settings.json'), $SettingsJson) # UTF-8, no BOM
 
   # 4. Start the app and follow main.log.
   Write-Host "== starting $AppExe"
-  $app = Start-Process -FilePath $AppExe -PassThru
+  $app = Start-Process -FilePath $AppExe -ArgumentList '--health-check' -PassThru
   $null = $app.Handle
   $start = Get-Date
   $sawStarted = $false
@@ -174,6 +179,26 @@ try {
   if ($bad.Success) { Fail "main.log: $($bad.Value.Trim())" }
   if ($app.HasExited) { Fail "the app exited (exit code $($app.ExitCode))" }
   if (-not (Get-EngineProcess)) { Fail 'the engine process is gone' }
+
+  # 8. The health check: everything a user needs, end to end. On Windows the engine runs on the
+  #    processor, so the model must load and the Hebrew sample must come out as Hebrew text.
+  #    The microphone, permissions and Claude can't pass on a CI machine and are only printed.
+  Write-Host '== waiting for the health check'
+  $deadline = (Get-Date).AddMinutes($HealthMinutes)
+  while (-not (Test-Path -LiteralPath $HealthFile) -and (Get-Date) -lt $deadline) {
+    if ($app.HasExited) { Fail "the app exited (exit code $($app.ExitCode))" }
+    Start-Sleep -Seconds 5
+  }
+  if (-not (Test-Path -LiteralPath $HealthFile)) { Fail "no health.json after $HealthMinutes minutes" }
+  $health = Get-Content -Raw -Encoding UTF8 -LiteralPath $HealthFile | ConvertFrom-Json
+  $health.items | Format-Table -AutoSize id, status, code, detail, ms | Out-String | Write-Host
+  foreach ($id in @('app', 'helper', 'engine', 'models', 'transcribe', 'storage')) {
+    $item = $health.items | Where-Object { $_.id -eq $id } | Select-Object -First 1
+    $st = if ($item) { $item.status } else { 'missing' }
+    # "slow" (warn) is fine on a CI processor; anything else must pass.
+    if ($st -ne 'ok' -and -not ($id -eq 'transcribe' -and $st -eq 'warn')) { Fail "health check: $id is $st $($item.code) $($item.detail)" }
+    Write-Host "ok: health $id ($st)"
+  }
 } catch {
   $failed = $true
   Write-Host "::error::$($_.Exception.Message)"
@@ -191,6 +216,8 @@ try {
   try { Stop-App } catch { Write-Host "stopping the app: $($_.Exception.Message)" }
   Start-Sleep -Seconds 3
   try { Uninstall-App } catch { Write-Host "::warning::uninstall: $($_.Exception.Message)" }
+  # A real uninstall removes the data folder (engine, models, settings) and the Claude connection.
+  if (Test-Path -LiteralPath $DataDir) { Write-Host "::warning::the uninstall left $DataDir behind" } else { Write-Host 'ok: the data folder was removed' }
 }
 
 if ($failed) { exit 1 }

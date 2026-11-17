@@ -1,0 +1,12 @@
+#!/bin/bash
+# Runs as root before the new Klara Wisper.app is copied in (Klara Wisper.pkg).
+# Quits a running Klara Wisper the normal way first: SIGTERM makes it stop and save a recording in
+# progress (index.ts: before-quit). Waits up to 90 s for that, then makes sure it is gone.
+APP_BIN="/Applications/Klara Wisper.app/Contents/MacOS/Klara Wisper"
+running() { /usr/bin/pgrep -f "^$APP_BIN" >/dev/null 2>&1; }
+if running; then
+  /usr/bin/pkill -TERM -f "^$APP_BIN" 2>/dev/null
+  for _ in $(seq 1 90); do running || break; sleep 1; done
+  running && /usr/bin/pkill -KILL -f "/Applications/Klara Wisper.app/Contents/" 2>/dev/null
+fi
+exit 0

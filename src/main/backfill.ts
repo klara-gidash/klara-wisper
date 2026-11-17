@@ -1,5 +1,5 @@
 import { SOURCE_LABEL } from '@shared/types'
-import { MATCH_VERSION, matchEvent } from './calendar'
+import { matchEvent, matchVersion } from './calendar'
 import { defaultTitle } from './meetings/recorder'
 import { db } from './storage/db'
 import { listMeetingFolders, readMeeting, renameMeetingFolder, writeMeeting } from './storage/files'
@@ -21,17 +21,18 @@ export async function matchPastMeetings(): Promise<void> {
   running = true
   let matched = 0
   let checked = 0
+  const version = matchVersion()
   try {
     for (const folder of listMeetingFolders()) {
       const m = readMeeting(folder)
       const meta = m?.meta
-      if (!m || !meta || meta.status !== 'done' || meta.calendarChecked === MATCH_VERSION) continue
+      if (!m || !meta || meta.status !== 'done' || meta.calendarChecked === version) continue
       // Matched by an older, looser pass (titleSource "calendar"), or never matched: look it up (again).
       const redo = meta.titleSource === 'calendar'
       if (meta.calendarEvent && !redo) continue
       checked++
       const event = await matchEvent(new Date(meta.startedAt), meta).catch(() => null)
-      meta.calendarChecked = MATCH_VERSION
+      meta.calendarChecked = version
       if (event) {
         matched++
         if (redo && meta.calendarEvent?.id !== event.id) meta.attendees = []

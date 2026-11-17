@@ -37,7 +37,7 @@ module.exports = {
       engineSource,
       // Claude skills (before / during / after a call), installed for Claude Code on launch.
       { from: 'skills', to: 'skills', filter: ['*/SKILL.md'] },
-      { from: 'resources', to: '.', filter: ['tray*.png'] }
+      { from: 'resources', to: '.', filter: ['tray*.png', 'health-he.wav'] }
     ],
     // uv (pinned, checksum-verified by the build script) sits next to the app binary so it is signed with it.
     extraFiles: existsSync('build/uv/uv') ? [{ from: 'build/uv/uv', to: 'MacOS/uv' }] : [],
@@ -66,14 +66,23 @@ module.exports = {
       engineSource,
       { from: 'skills', to: 'skills', filter: ['*/SKILL.md'] },
       { from: 'build/uv-win/uv.exe', to: 'bin/uv.exe' },
-      { from: 'resources', to: '.', filter: ['tray*.png'] }
+      { from: 'resources', to: '.', filter: ['tray*.png', 'health-he.wav'] }
     ]
   },
   nsis: {
-    oneClick: true,
+    oneClick: true, // no pages: double-click, it installs in seconds and opens the app's install wizard
     perMachine: false, // installs into the user's profile: no admin rights needed
     artifactName: 'Klara Wisper Setup.${ext}',
-    differentialPackage: false
+    differentialPackage: false,
+    runAfterFinish: true,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+    shortcutName: 'Klara Wisper',
+    // A real uninstall also removes %APPDATA%\Klara Wisper (engine, models, settings: about 3.5 GB);
+    // an update keeps it. Transcripts in Documents\Klara Wisper are never removed.
+    deleteAppDataOnUninstall: true,
+    // Windows version check before installing, and Claude cleanup on uninstall.
+    include: 'installer/windows/installer.nsh'
   },
   // The app binary must only ever run Klara Wisper's own code: no "run as Node", no NODE_OPTIONS,
   // no --inspect, and only the signed app.asar (checked against its hash at launch).

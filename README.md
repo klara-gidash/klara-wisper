@@ -94,7 +94,7 @@
 
 ## התקנה
 
-**למשתמשים:** מורידים את ה-dmg (או את `Klara Wisper Setup.exe` ל-Windows) מ-[Releases](https://github.com/klara-gidash/klara-wisper/releases/latest). המדריך המלא: [docs/INSTALL.he.md](docs/INSTALL.he.md).
+**למשתמשים:** מורידים את `Klara Wisper.pkg` (מק) או את `Klara Wisper Setup.exe` (Windows) מ-[Releases](https://github.com/klara-gidash/klara-wisper/releases/latest), ולוחצים פעמיים. מדריך בתוך התוכנה בודק את המחשב, שואל שתי שאלות, בוחר את הגרסה שמתאימה, מתקין, מתחבר ל-Claude ובודק שהכל עובד. המדריך לעמיתים: [docs/colleagues-install.he.md](docs/colleagues-install.he.md); המדריך המלא: [docs/INSTALL.he.md](docs/INSTALL.he.md).
 
 **מהקוד, על מק חדש** (Apple Silicon, macOS 14.4 ומעלה, עם Command Line Tools): `bash scripts/setup.sh`.
 
@@ -105,9 +105,9 @@
 
 בנייה מחדש אחרי שינוי בקוד: `bash scripts/dist.sh`. ההוראות ל-Windows ול-GitHub Actions: [docs/BUILD-AND-TEST.md](docs/BUILD-AND-TEST.md).
 
-### התקנה לעמיתים (קובץ dmg)
+### התקנה לעמיתים (pkg ו-dmg)
 
-`bash scripts/make-dmg.sh` בונה את `release/Klara Wisper.dmg` (כ-160MB). הבנייה לא נוגעת באפליקציה המותקנת.
+`bash scripts/make-dmg.sh` בונה את `release/Klara Wisper.pkg` (המומלץ: חלון התקנה של macOS, שמתקין ל-Applications ופותח את התוכנה) ואת `release/Klara Wisper.dmg` (כ-160MB כל אחד). הבנייה לא נוגעת באפליקציה המותקנת. קבצי ההתקנה עצמם (הבדיקה של Installer, הסקריפטים, ההרחבות ל-NSIS של Windows) נמצאים ב-`installer/`.
 
 - האפליקציה עצמאית לגמרי, ולא תלויה בתיקייה הזאת. בתוכה נמצאים:
   - `uv` בגרסה נעולה, שנבדק מול SHA-256.

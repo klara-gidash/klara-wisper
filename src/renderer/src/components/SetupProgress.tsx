@@ -1,4 +1,5 @@
-import { AlertTriangle, Check, Download, RefreshCw } from 'lucide-react'
+import { AlertTriangle, Check, Download, RefreshCw, WifiOff } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { SetupState } from '@shared/types'
 import { invoke } from '../lib/api'
@@ -14,13 +15,28 @@ function Bar({ value }: { value: number }) {
   )
 }
 
+/** Seconds until `at` (ms since 1970), ticking once a second. */
+function useCountdown(at: number | undefined): number {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (!at) return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [at])
+  return at ? Math.max(0, Math.ceil((at - now) / 1000)) : 0
+}
+
 /** Installs the engine and the models on first launch, with a progress bar for each part. */
 export function SetupProgress({ setup }: { setup: SetupState }) {
   const { t } = useTranslation()
   const engineDone = !setup.engineMissing || setup.phase === 'models' || setup.phase === 'done'
   const enginePhase = setup.phase === 'python' || setup.phase === 'packages'
   const finished = !setup.needed && !setup.running
-  const start = (): void => void invoke('setup:run')
+  const waiting = setup.running && !!setup.retryAt
+  const seconds = useCountdown(setup.retryAt)
+  const start = (): void => void invoke('setup:retry')
+  const kind = setup.errorKind ?? 'unknown'
+  const modelsTotal = setup.models?.reduce((sum, m) => sum + m.bytes, 0) ?? 0
 
   return (
     <div className="space-y-4">
@@ -29,7 +45,7 @@ export function SetupProgress({ setup }: { setup: SetupState }) {
         <div className="mb-2 flex items-center justify-between text-[13px]">
           <span className="font-medium">{t('onb.setupEngine')}</span>
           <span className="text-[12px] text-ink-3">
-            {engineDone ? <Check size={15} className="text-ok" /> : enginePhase ? `${Math.round(setup.progress * 100)}%` : '≈ 0.3 GB'}
+            {engineDone ? <Check size={15} className="text-ok" /> : enginePhase ? `${Math.round(setup.progress * 100)}%` : '≈ 0.4 GB'}
           </span>
         </div>
         {enginePhase && <Bar value={setup.progress} />}
@@ -43,7 +59,13 @@ export function SetupProgress({ setup }: { setup: SetupState }) {
         <div className="mb-2 flex items-center justify-between text-[13px]">
           <span className="font-medium">{t('onb.setupModels')}</span>
           <span className="text-[12px] text-ink-3">
-            {finished || (setup.modelsMissing?.length === 0 && !setup.running) ? <Check size={15} className="text-ok" /> : setup.phase === 'models' ? `${Math.round(setup.progress * 100)}%` : '≈ 2.1 GB'}
+            {finished || (setup.modelsMissing?.length === 0 && !setup.running) ? (
+              <Check size={15} className="text-ok" />
+            ) : setup.phase === 'models' ? (
+              `${Math.round(setup.progress * 100)}%`
+            ) : modelsTotal ? (
+              `≈ ${gb(modelsTotal)} GB`
+            ) : null}
           </span>
         </div>
         {setup.phase === 'models' && <Bar value={setup.progress} />}
@@ -53,13 +75,7 @@ export function SetupProgress({ setup }: { setup: SetupState }) {
               <li key={m.key} className="flex items-center justify-between gap-3">
                 <span dir="ltr" className="truncate">{m.title}</span>
                 <span dir="ltr" className="shrink-0 tabular-nums text-ink-3">
-                  {m.state === 'done' ? (
-                    <Check size={13} className="text-ok" />
-                  ) : m.state === 'verifying' ? (
-                    t('onb.setupVerifying')
-                  ) : (
-                    `${gb(m.done)} / ${gb(m.bytes)} GB`
-                  )}
+                  {m.state === 'done' ? <Check size={13} className="text-ok" /> : m.state === 'verifying' ? t('onb.setupVerifying') : `${gb(m.done)} / ${gb(m.bytes)} GB`}
                 </span>
               </li>
             ))}
@@ -67,12 +83,31 @@ export function SetupProgress({ setup }: { setup: SetupState }) {
         )}
       </div>
 
+      {/* waiting for the connection: it tries again by itself */}
+      {waiting && (
+        <div className="flex items-start gap-2.5 rounded-xl bg-warn/10 p-3.5 text-[12.5px] leading-relaxed text-ink">
+          <WifiOff size={16} className="mt-0.5 shrink-0 text-warn" />
+          <div className="min-w-0 flex-1">
+            <div className="font-medium">{t(`setupx.errorTitle_${kind}`)}</div>
+            <div className="mt-0.5 text-ink-2">{t(`setupx.errorBody_${kind}`)}</div>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <span className="text-[12px] text-ink-3">{seconds > 0 ? t('setupx.retryIn', { s: seconds, n: setup.attempt ?? 1 }) : t('setupx.retrying')}</span>
+              {seconds > 0 && <Button size="sm" onClick={start}>{t('setupx.retryNow')}</Button>}
+            </div>
+          </div>
+        </div>
+      )}
+
       {setup.phase === 'error' && (
         <div className="flex items-start gap-2.5 rounded-xl bg-rec-soft p-3.5 text-[12.5px] leading-relaxed text-ink">
           <AlertTriangle size={16} className="mt-0.5 shrink-0 text-rec" />
           <div className="min-w-0">
-            <div className="font-medium">{t('onb.setupFailed')}</div>
-            <div dir="ltr" className="selectable mt-1 break-words text-[11.5px] text-ink-3">{setup.error}</div>
+            <div className="font-medium">{t(`setupx.errorTitle_${kind}`)}</div>
+            <div className="mt-0.5 text-ink-2">{t(`setupx.errorBody_${kind}`)}</div>
+            <details className="mt-1.5">
+              <summary className="cursor-pointer text-[11.5px] text-ink-3">{t('setupx.details')}</summary>
+              <div dir="ltr" className="selectable mt-1 break-words text-start text-[11.5px] text-ink-3">{setup.error}</div>
+            </details>
           </div>
         </div>
       )}
