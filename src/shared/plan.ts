@@ -55,8 +55,10 @@ export interface Plan {
   /** Model key of engine/klara_engine/models.py. */
   asr: string
   language: 'he' | 'auto'
-  /** Speaker separation + voiceprints (Nemotron + ECAPA). */
+  /** Telling the speakers apart (Nemotron diarization): on, unless the computer is light. */
   speakers: boolean
+  /** Recognising the user's own voice (ECAPA voiceprint, 90 MB): always on. */
+  voiceprint: boolean
   /** Separate the remote participants of a call from each other (needs `speakers`). */
   diarizeRemote: boolean
   /** Start recording by itself when a call is detected. */
@@ -78,7 +80,8 @@ export const MODEL_GB: Record<string, number> = {
   'nemotron-diarization': 0.4,
   ecapa: 0.09
 }
-export const SPEAKER_MODELS = ['nemotron-diarization', 'ecapa']
+export const DIARIZATION_MODEL = 'nemotron-diarization'
+export const VOICEPRINT_MODEL = 'ecapa'
 
 /** Python + the locked packages: what is downloaded, and what it takes on disk once unpacked. */
 const ENGINE_DOWNLOAD_GB = 0.4
@@ -131,18 +134,21 @@ export function recommend(m: Machine, wishes: Wishes = DEFAULT_WISHES): Plan {
       : wishes.accurate && tier === 'strong'
         ? 'whisper-large-v3'
         : 'whisper-large-v3-turbo'
-  // In person there is one microphone for everyone, so the speaker models are the whole point.
-  // On calls they only split the far side into people: skipped on a light computer, where the
-  // memory is better spent on the transcription itself ("me" and "the others" still work).
-  const speakers = uses.has('inperson') || (uses.has('calls') && tier !== 'light')
-  const models = [asr, ...(speakers ? SPEAKER_MODELS : [])]
+  // Speaker recognition is on everywhere, except that a light computer skips telling the other
+  // people apart (Nemotron, run after each call): its memory goes to the transcription itself.
+  // In-person meetings keep it even there, since one microphone hears everyone. The user's own
+  // voice (the voiceprint, a 90 MB model) is recognised on every computer.
+  const speakers = tier !== 'light' || uses.has('inperson')
+  const voiceprint = true
+  const models = [asr, ...(speakers ? [DIARIZATION_MODEL] : []), ...(voiceprint ? [VOICEPRINT_MODEL] : [])]
   const modelsGB = models.reduce((sum, k) => sum + (MODEL_GB[k] ?? 0), 0)
   return {
     tier,
     asr,
     language,
     speakers,
-    diarizeRemote: speakers && uses.has('calls') && tier !== 'light',
+    voiceprint,
+    diarizeRemote: speakers && tier !== 'light',
     autoRecord: uses.has('calls'),
     models,
     downloadGB: round1(modelsGB + ENGINE_DOWNLOAD_GB),

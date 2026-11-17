@@ -217,7 +217,15 @@ try {
   Start-Sleep -Seconds 3
   try { Uninstall-App } catch { Write-Host "::warning::uninstall: $($_.Exception.Message)" }
   # A real uninstall removes the data folder (engine, models, settings) and the Claude connection.
-  if (Test-Path -LiteralPath $DataDir) { Write-Host "::warning::the uninstall left $DataDir behind" } else { Write-Host 'ok: the data folder was removed' }
+  # The uninstaller carries on from %TEMP% after the app's files are gone: give it a minute.
+  $deadline = (Get-Date).AddMinutes(1)
+  while ((Test-Path -LiteralPath $DataDir) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+  if (Test-Path -LiteralPath $DataDir) {
+    $left = Get-ChildItem -Recurse -Force -LiteralPath $DataDir -ErrorAction SilentlyContinue | Select-Object -First 25 | ForEach-Object { $_.FullName.Substring($DataDir.Length) }
+    Write-Host "::warning::the uninstall left $DataDir behind: $($left -join ', ')"
+  } else {
+    Write-Host 'ok: the data folder was removed'
+  }
 }
 
 if ($failed) { exit 1 }

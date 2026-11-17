@@ -3,9 +3,17 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AppState, HealthItem, HealthReport } from '@shared/types'
 import { invoke, useAppState, useEvent } from '../lib/api'
+import { SetupProgress } from './SetupProgress'
 import { Button, Card, cn, Spinner } from './ui'
 
 const VC_REDIST = 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
+
+/** A failure that "Repair automatically" (rebuilding the engine, re-downloading models) can fix. */
+export function repairable(report: HealthReport | null | undefined): boolean {
+  return !!report?.items.some(
+    (i) => i.status === 'fail' && (i.id === 'engine' || i.id === 'models' || i.id === 'transcribe' || i.id === 'speakers' || (i.id === 'claude' && i.code === 'serverFailed'))
+  )
+}
 
 function Icon({ status }: { status: HealthItem['status'] }) {
   if (status === 'running') return <Spinner className="size-3.5 text-ink-3" />
@@ -19,7 +27,18 @@ function Icon({ status }: { status: HealthItem['status'] }) {
  * The health check, live: each line turns green, orange or red as it is checked. `auto` starts it
  * by itself (once the install is finished). Failed lines say what to do; "repair" rebuilds the engine.
  */
-export function HealthPanel({ auto = false, onPermissions }: { auto?: boolean; onPermissions?: () => void }) {
+export function HealthPanel({
+  auto = false,
+  onPermissions,
+  onVoice,
+  onReport
+}: {
+  auto?: boolean
+  onPermissions?: () => void
+  onVoice?: () => void
+  /** The latest result (null while a check or a repair runs). */
+  onReport?: (r: HealthReport | null) => void
+}) {
   const { t } = useTranslation()
   const app = useAppState()
   const [items, setItems] = useState<HealthItem[] | null>(null)
@@ -32,6 +51,7 @@ export function HealthPanel({ auto = false, onPermissions }: { auto?: boolean; o
 
   const installing = !!app?.setup.running
   const phase = app?.setup.phase
+  useEffect(() => onReport?.(running || installing ? null : report), [report, running, installing])
   const run = async (): Promise<void> => {
     setRunning(true)
     setCopied(false)
@@ -48,8 +68,11 @@ export function HealthPanel({ auto = false, onPermissions }: { auto?: boolean; o
     want.current = false
     void run()
   }
-  // Start by itself when the install is done (and again after a repair finishes installing).
+  // Start by itself when the install is done, and in the wizard again after every (re)install.
+  const wasInstalling = useRef(installing)
   useEffect(() => {
+    if (auto && wasInstalling.current && !installing) want.current = true
+    wasInstalling.current = installing
     if (!installing) runIfWanted()
   }, [installing, phase])
 
@@ -66,17 +89,21 @@ export function HealthPanel({ auto = false, onPermissions }: { auto?: boolean; o
     setCopied(true)
   }
 
-  if (installing && !items) {
+  if (installing && !items && app) {
+    // Still installing: show the downloads (with their retries), the check starts when they're done.
     return (
-      <div className="flex items-center gap-2 text-[13px] text-ink-2">
-        <Spinner /> {t('wiz.healthWaiting')} {app?.setup.phase === 'models' || app?.setup.phase === 'packages' ? `${Math.round((app.setup.progress ?? 0) * 100)}%` : ''}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-[13px] text-ink-2">
+          <Spinner /> {t('wiz.healthWaiting')}
+        </div>
+        <SetupProgress setup={app.setup} bare />
       </div>
     )
   }
 
   const failed = report && !report.ok
   const warned = report?.ok && report.items.some((i) => i.status === 'warn')
-  const needsRepair = report?.items.some((i) => i.status === 'fail' && (i.id === 'engine' || i.id === 'models' || i.id === 'transcribe' || (i.id === 'claude' && i.code === 'serverFailed')))
+  const needsRepair = repairable(report)
 
   return (
     <div className="space-y-4">
@@ -109,6 +136,9 @@ export function HealthPanel({ auto = false, onPermissions }: { auto?: boolean; o
                 )}
                 {i.status === 'fail' && i.id === 'app' && i.code === 'misplaced' && (
                   <Button className="mt-2" size="sm" onClick={() => void invoke('app:moveToApplications')}>{t('health.fixMove')}</Button>
+                )}
+                {onVoice && i.id === 'speakers' && i.code === 'notEnrolled' && (
+                  <Button className="mt-2" size="sm" onClick={onVoice}>{t('health.fixVoice')}</Button>
                 )}
                 {onPermissions && (i.status === 'fail' || i.status === 'warn') && (i.id === 'microphone' || i.id === 'permissions') && (
                   <Button className="mt-2" size="sm" onClick={onPermissions}>{t('health.fixPermissions')}</Button>

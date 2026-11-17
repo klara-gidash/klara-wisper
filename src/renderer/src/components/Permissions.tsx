@@ -20,6 +20,30 @@ const BROWSER_BUNDLES = [
   'com.microsoft.edgemac', 'com.brave.Browser', 'com.vivaldi.Vivaldi', 'com.operasoftware.Opera'
 ]
 
+/**
+ * The install wizard's "allow everything" button: asks for each permission that isn't granted yet,
+ * one after the other, so a single click walks through every macOS prompt. Returns when all were asked.
+ */
+export async function askAll(platform: string | undefined, current: Record<string, string> | null | undefined, needs: { calendar: boolean; dictation: boolean; calls: boolean }): Promise<void> {
+  if (platform === 'win32') {
+    if (current?.microphone !== 'granted') await invoke('permissions:request', 'microphone').catch(() => undefined)
+    return
+  }
+  const order: Kind[] = [
+    'microphone',
+    ...(needs.calls ? (['systemAudio'] as Kind[]) : []),
+    ...(needs.calendar ? (['calendar'] as Kind[]) : []),
+    ...(needs.dictation ? (['accessibility', 'inputMonitoring'] as Kind[]) : [])
+  ]
+  for (const kind of order) {
+    if (current?.[kind] === 'granted') continue
+    await invoke('permissions:request', kind).catch(() => undefined)
+  }
+  if (needs.calls) {
+    for (const b of BROWSER_BUNDLES) await invoke('permissions:request', 'automation', b).catch(() => undefined)
+  }
+}
+
 /** Permission cards: what each one is for, its state, and a button that asks macOS. */
 export function PermissionList({ compact = false }: { compact?: boolean }) {
   const { t } = useTranslation()

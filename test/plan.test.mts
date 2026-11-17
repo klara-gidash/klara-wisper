@@ -50,20 +50,46 @@ test('Windows always gets the CTranslate2 Hebrew model, whatever the language an
   assert.equal(p.language, 'he')
 })
 
-test('dictation only: no speaker models, no automatic recording', () => {
+test('speaker recognition is on whatever the uses, unless the computer is light', () => {
   const p = recommend(mac(), { uses: ['dictation'], language: 'he' })
-  assert.deepEqual(p.models, ['whisper-ivrit-turbo'])
-  assert.equal(p.speakers, false)
-  assert.equal(p.autoRecord, false)
-  assert.equal(p.downloadGB, 2)
+  assert.deepEqual(p.models, ['whisper-ivrit-turbo', 'nemotron-diarization', 'ecapa'])
+  assert.equal(p.speakers, true)
+  assert.equal(p.voiceprint, true)
+  assert.equal(p.autoRecord, false) // dictation only: calls are not recorded by themselves
+  assert.equal(recommend(pc(), { uses: ['calls'], language: 'he' }).diarizeRemote, true)
 })
 
-test('a light computer with calls only skips the speaker models; in person always keeps them', () => {
-  const light = mac({ ramGB: 8 })
-  assert.equal(recommend(light, { uses: ['calls'], language: 'he' }).speakers, false)
-  const inperson = recommend(light, { uses: ['inperson'], language: 'he' })
-  assert.equal(inperson.speakers, true)
-  assert.equal(inperson.diarizeRemote, false)
+test('a light computer keeps the own-voice model, skips speaker separation unless in person', () => {
+  for (const light of [mac({ ramGB: 8 }), pc({ cores: 4, ramGB: 8 })]) {
+    const calls = recommend(light, { uses: ['dictation', 'calls'], language: 'he' })
+    assert.equal(calls.speakers, false)
+    assert.equal(calls.voiceprint, true)
+    assert.ok(calls.models.includes('ecapa'))
+    assert.ok(!calls.models.includes('nemotron-diarization'))
+    assert.equal(calls.diarizeRemote, false)
+    const inperson = recommend(light, { uses: ['inperson'], language: 'he' })
+    assert.equal(inperson.speakers, true)
+    assert.equal(inperson.diarizeRemote, false)
+  }
+})
+
+test('every plan, on every kind of computer, recognises the user\'s own voice', () => {
+  const machines = [
+    mac(), mac({ ramGB: 8 }), mac({ chip: 'Apple M3 Max', ramGB: 64 }), pc(), pc({ cores: 4, ramGB: 8 }), pc({ cores: 16, ramGB: 32 }),
+    pc({ arch: 'arm64', translated: true, chip: 'Snapdragon X Elite', ramGB: 16, cores: 12 })
+  ]
+  const uses = [['dictation'], ['calls'], ['inperson'], ['dictation', 'calls', 'inperson']] as const
+  for (const m of machines) {
+    for (const u of uses) {
+      for (const language of ['he', 'auto'] as const) {
+        const p = recommend(m, { uses: [...u], language })
+        assert.ok(p.models.includes('ecapa'), `${m.chip} ${u}`)
+        assert.equal(p.models[0], p.asr)
+        assert.ok(p.downloadGB < 4.5 && p.downloadGB >= 2, `${p.downloadGB}`)
+        if (m.platform === 'win32') assert.equal(p.asr, 'whisper-ivrit-turbo-ct2')
+      }
+    }
+  }
 })
 
 test('no uses picked counts as all of them', () => {

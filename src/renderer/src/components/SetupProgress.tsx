@@ -27,7 +27,7 @@ function useCountdown(at: number | undefined): number {
 }
 
 /** Installs the engine and the models on first launch, with a progress bar for each part. */
-export function SetupProgress({ setup }: { setup: SetupState }) {
+export function SetupProgress({ setup, bare = false }: { setup: SetupState; bare?: boolean }) {
   const { t } = useTranslation()
   const engineDone = !setup.engineMissing || setup.phase === 'models' || setup.phase === 'done'
   const enginePhase = setup.phase === 'python' || setup.phase === 'packages'
@@ -112,7 +112,7 @@ export function SetupProgress({ setup }: { setup: SetupState }) {
         </div>
       )}
 
-      <div className="flex items-center gap-3">
+      <div className={bare && setup.running ? 'hidden' : 'flex items-center gap-3'}>
         {finished ? (
           <span className="flex items-center gap-1.5 text-[13px] font-medium text-ok"><Check size={15} /> {t('onb.setupDone')}</span>
         ) : setup.running ? (

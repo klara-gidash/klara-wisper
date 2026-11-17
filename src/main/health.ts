@@ -12,7 +12,7 @@ import { recorder } from './meetings/recorder'
 import { dataDir, enginePython, projectRoot } from './paths'
 import { canWrite, freeGB, machine, misplaced } from './preflight'
 import { settings } from './settings'
-import { missingModels, setup } from './setup'
+import { missingModels, requiredModels, setup } from './setup'
 
 /**
  * The health check: does everything a user needs actually work on this computer, end to end?
@@ -21,7 +21,7 @@ import { missingModels, setup } from './setup'
  * Claude can start the connection), not just "the file is there".
  */
 
-const ORDER: HealthItem['id'][] = ['app', 'helper', 'engine', 'models', 'transcribe', 'microphone', 'permissions', 'calendar', 'claude', 'storage']
+const ORDER: HealthItem['id'][] = ['app', 'helper', 'engine', 'models', 'transcribe', 'speakers', 'microphone', 'permissions', 'calendar', 'claude', 'storage']
 /** A 9-second Hebrew sentence shipped with the app ("…התוכנית…המשימות…"). */
 const SAMPLE_SECONDS = 9
 const SAMPLE_WORDS = ['התוכנית', 'משימות', 'היום', 'צוות']
@@ -177,6 +177,21 @@ async function doRun(onUpdate?: (items: HealthItem[]) => void): Promise<HealthRe
     const detail = `${seconds.toFixed(1)} s`
     // Slower than three times real time: calls are still transcribed, but the text arrives late.
     return seconds > SAMPLE_SECONDS * 3 ? { status: 'warn', code: 'slow', detail } : { status: 'ok', detail }
+  })
+
+  // 5b. speaker recognition: the models this plan needs are loaded, and the user's own voice is known
+  await check('speakers', async () => {
+    if (engineStatus !== 'ok') return { status: 'skip', code: 'noEngine' }
+    const need = requiredModels()
+    // The speaker models load next to Whisper; give them a few seconds more if they are still loading.
+    const loaded = (): boolean =>
+      (!need.includes('ecapa') || !!engine.status.voiceprints) && (!need.includes('nemotron-diarization') || !!engine.status.diarization)
+    if (!loaded()) await waitUntil(loaded, 60_000)
+    if (need.includes('ecapa') && !engine.status.voiceprints) return { status: 'fail', code: 'voiceModel' }
+    if (need.includes('nemotron-diarization') && !engine.status.diarization) return { status: 'fail', code: 'diarModel' }
+    const me = Object.values(engine.status.voiceprintKeys ?? {}).some((v) => v.isMe)
+    if (need.includes('ecapa') && !me) return { status: 'warn', code: 'notEnrolled' }
+    return { status: 'ok', detail: need.includes('nemotron-diarization') ? undefined : 'voice' }
   })
 
   // 6. the microphone

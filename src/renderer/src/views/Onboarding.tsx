@@ -5,11 +5,11 @@ import {
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { ClaudeAuto, PreflightReport } from '@shared/types'
+import type { ClaudeAuto, HealthReport, PreflightReport } from '@shared/types'
 import { blocked, DEFAULT_WISHES, recommend, tierOf, type Plan, type Problem, type Use, type Wishes } from '@shared/plan'
 import { GoogleCalendarSection } from '../components/GoogleCalendarSection'
-import { HealthPanel } from '../components/HealthPanel'
-import { PermissionList } from '../components/Permissions'
+import { HealthPanel, repairable } from '../components/HealthPanel'
+import { askAll, PermissionList } from '../components/Permissions'
 import { SetupProgress } from '../components/SetupProgress'
 import { Button, Card, cn, Kbd, Segmented, Spinner, Toggle } from '../components/ui'
 import { VoiceEnroll } from '../components/VoiceEnroll'
@@ -41,6 +41,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [planned, setPlanned] = useState<Plan | null>(null)
   const [name, setName] = useState(app?.settings.userName ?? '')
   const [step, setStep] = useState<Step>('welcome')
+  const [health, setHealth] = useState<HealthReport | null>(null)
+  const [askedAll, setAskedAll] = useState(false)
+  const [asking, setAsking] = useState(false)
+  const [googleLinked, setGoogleLinked] = useState(false)
 
   const check = async (): Promise<void> => {
     setChecking(true)
@@ -59,14 +63,18 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   useEffect(() => void check(), [])
 
   const plan = useMemo(() => (report ? recommend(report.machine, wishes) : null), [report, wishes])
-  const speakers = (planned ?? plan)?.speakers ?? true
+  // The user's own voice is recognised on every computer: the voice step is always there.
+  const voiceprint = (planned ?? plan)?.voiceprint ?? true
   // The calendar names the calls; with dictation only there are no calls to name.
   const meetings = wishes.uses.includes('calls') || wishes.uses.includes('inperson')
+  // The voiceprint needs the engine, so its step comes after the health check, which waits for
+  // the install to finish: by then recording the voice works right away.
   const steps: Step[] = [
     'welcome', 'check', 'ask', 'install', 'permissions',
     ...(meetings ? (['calendar'] as Step[]) : []),
-    ...(speakers ? (['voice'] as Step[]) : []),
-    'claude', 'health', 'done'
+    'claude', 'health',
+    ...(voiceprint ? (['voice'] as Step[]) : []),
+    'done'
   ]
   const index = steps.indexOf(step)
   const go = (s: Step): void => setStep(s)
@@ -88,10 +96,47 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
   const isBlocked = !!report && blocked(report.problems)
   let primary: { label: string; onClick: () => void; disabled?: boolean; quiet?: boolean } = { label: t('wiz.next'), onClick: next }
+  /** A small extra way forward next to the main button (e.g. "continue anyway" when a fix is offered). */
+  let secondary: { label: string; onClick: () => void } | null = null
   if (step === 'welcome') primary = { label: t('wiz.begin'), onClick: next }
   if (step === 'check') primary = { label: t('wiz.next'), onClick: next, disabled: !report || checking || isBlocked }
   if (step === 'ask') primary = { label: t('wiz.install'), onClick: () => void startInstall(), disabled: !plan || isBlocked }
   if (step === 'done') primary = { label: t('wiz.start'), onClick: finish }
+  // Permissions: the main button asks for everything still missing (one macOS prompt after another).
+  const perms = app?.permissions as unknown as Record<string, string> | null | undefined
+  const needs = { calendar: meetings, dictation: wishes.uses.includes('dictation'), calls: wishes.uses.includes('calls') }
+  const missingPerms = mac
+    ? ['microphone', ...(needs.calendar ? ['calendar'] : []), ...(needs.dictation ? ['accessibility', 'inputMonitoring'] : [])].some((k) => perms?.[k] !== 'granted')
+    : perms?.microphone !== 'granted'
+  if (step === 'permissions' && missingPerms && !askedAll) {
+    primary = {
+      label: asking ? t('wiz.permAsking') : t('wiz.permAllowAll'),
+      disabled: asking,
+      onClick: () => {
+        setAsking(true)
+        void askAll(app?.platform, perms, needs).finally(() => {
+          setAsking(false)
+          setAskedAll(true)
+          void invoke('permissions:get')
+        })
+      }
+    }
+  }
+  // Calendar and voice: until they're done, the way forward is the button on the page; skipping stays possible.
+  const calendarDone = googleLinked || (mac && perms?.calendar === 'granted')
+  if (step === 'calendar' && !calendarDone) primary = { label: t('wiz.skip'), onClick: next, quiet: true }
+  if (step === 'voice' && !app?.engine.voiceprintKeys?.me) primary = { label: t('wiz.skip'), onClick: next, quiet: true }
+  // The last check has to finish first; when something failed, the fix on the page is the way
+  // forward and going on stays possible, quietly.
+  if (step === 'health') {
+    if (!health) primary = { label: t('wiz.healthChecking'), onClick: next, disabled: true }
+    else if (health.ok) primary = { label: t('wiz.next'), onClick: next }
+    else if (repairable(health)) {
+      // The fix is the main button; the health check runs again by itself when it's done.
+      primary = { label: t('wiz.healthRepair'), onClick: () => void invoke('setup:repair').catch(() => undefined) }
+      secondary = { label: t('wiz.continueAnyway'), onClick: next }
+    } else primary = { label: t('wiz.continueAnyway'), onClick: next, quiet: true }
+  }
   // The move button is the way forward; going on from the download folder stays possible, quietly.
   if (step === 'check' && report?.misplaced && !isBlocked) primary = { label: t('wiz.continueAnyway'), onClick: next, quiet: true }
 
@@ -134,7 +179,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   )}
                 </div>
               )}
-              {step === 'calendar' && <CalendarStep mac={mac} />}
+              {step === 'calendar' && <CalendarStep mac={mac} onGoogle={setGoogleLinked} />}
               {step === 'voice' && (
                 <div>
                   <Title>{t('wiz.voiceTitle')}</Title>
@@ -163,11 +208,20 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   <Title>{t('wiz.healthTitle')}</Title>
                   <Body>{t('wiz.healthBody')}</Body>
                   <div className="mt-6">
-                    <HealthPanel auto onPermissions={() => go('permissions')} />
+                    <HealthPanel auto onPermissions={() => go('permissions')} onVoice={() => go('voice')} onReport={setHealth} />
                   </div>
                 </div>
               )}
-              {step === 'done' && (
+              {step === 'done' && health && !health.ok && (
+                <div className="text-center">
+                  <div className="mx-auto mb-6 grid size-16 place-items-center rounded-full bg-rec-soft text-rec">
+                    <AlertTriangle size={28} />
+                  </div>
+                  <h1 className="text-[24px] font-semibold tracking-[-0.02em]">{t('wiz.doneWarnTitle')}</h1>
+                  <p className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed text-ink-2">{t('wiz.doneWarnBody')}</p>
+                </div>
+              )}
+              {step === 'done' && !(health && !health.ok) && (
                 <div className="text-center">
                   <div className="mx-auto mb-6 grid size-16 place-items-center rounded-full bg-ok-soft text-ok">
                     <Check size={30} />
@@ -194,9 +248,14 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             ) : (
               <span />
             )}
-            <Button variant={primary.quiet ? 'ghost' : 'primary'} size="lg" onClick={primary.onClick} disabled={primary.disabled}>
-              {primary.label} {step !== 'done' && <Next size={16} />}
-            </Button>
+            <div className="flex items-center gap-2">
+              {secondary && (
+                <Button variant="ghost" onClick={secondary.onClick}>{secondary.label}</Button>
+              )}
+              <Button variant={primary.quiet ? 'ghost' : 'primary'} size="lg" onClick={primary.onClick} disabled={primary.disabled}>
+                {primary.label} {step !== 'done' && <Next size={16} />}
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -409,9 +468,8 @@ function AskStep({ report, wishes, setWishes, plan }: { report: PreflightReport;
         <PlanRow label={t('wiz.planModel')}>
           <span dir="ltr">{modelName(plan.asr)}</span>
         </PlanRow>
-        <PlanRow label={t('wiz.planSpeakers')}>
-          {plan.speakers ? t('wiz.planSpeakersOn') : wishes.uses.includes('calls') ? t('wiz.planSpeakersOff') : t('wiz.planSpeakersUnused')}
-        </PlanRow>
+        <PlanRow label={t('wiz.planVoice')}>{plan.voiceprint ? t('wiz.planSpeakersOn') : t('wiz.planSpeakersOffShort')}</PlanRow>
+        <PlanRow label={t('wiz.planSpeakers')}>{plan.speakers ? t('wiz.planSpeakersOn') : t('wiz.planSpeakersOff')}</PlanRow>
         <PlanRow label={t('wiz.planSize')}>
           <span className="flex items-center gap-1.5">
             <Download size={13} className="text-ink-3" /> {t('wiz.planSizeValue', { gb: plan.downloadGB })}
@@ -436,7 +494,7 @@ function PlanRow({ label, children }: { label: string; children: ReactNode }) {
  * app (which shows Google, Outlook and iCloud accounts added in System Settings), or Google Calendar
  * directly through its secret iCal link. On Windows only the Google link exists.
  */
-function CalendarStep({ mac }: { mac: boolean }) {
+function CalendarStep({ mac, onGoogle }: { mac: boolean; onGoogle: (linked: boolean) => void }) {
   const { t } = useTranslation()
   const app = useAppState()
   const macCalendar = app?.permissions?.calendar === 'granted'
@@ -471,7 +529,7 @@ function CalendarStep({ mac }: { mac: boolean }) {
       )}
       <div className="mt-5 text-[13.5px] font-semibold">{mac ? t('wiz.calGoogleOr') : t('wiz.calGoogle')}</div>
       <Card className="mt-2">
-        <GoogleCalendarSection />
+        <GoogleCalendarSection onChange={(s) => onGoogle(!!s?.linked)} />
       </Card>
       <div className="mt-3 text-[12px] text-ink-3">{t('wiz.calLater')}</div>
     </div>

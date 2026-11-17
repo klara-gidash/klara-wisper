@@ -53,6 +53,9 @@ void dictation // starts listening to the push-to-talk key
 // its own folders (the Claude connection, the skills, the login item) and exits without a window.
 const cleanupOnly = process.argv.includes('--cleanup')
 if (cleanupOnly) {
+  // No GPU process: nothing of Chromium's should outlive this run and keep files in the data folder
+  // open while the uninstaller deletes it.
+  app.disableHardwareAcceleration()
   const done = (): void => app.exit(0)
   setTimeout(done, 25_000)
   void app
@@ -297,7 +300,9 @@ app.whenReady().then(async () => {
   })
   // Keep macOS in line with the setting: a reinstall (scripts/dist.sh replaces the app) or a
   // settings file from elsewhere could leave the login item missing or stale.
-  if (app.isPackaged && app.getLoginItemSettings().openAtLogin !== settings.value.launchAtLogin) {
+  // Not before the install wizard is done: a first launch has nothing to fix, and a copy started for
+  // testing must never change the login item of the app that is really installed.
+  if (app.isPackaged && settings.value.onboarded && app.getLoginItemSettings().openAtLogin !== settings.value.launchAtLogin) {
     app.setLoginItemSettings({ openAtLogin: settings.value.launchAtLogin })
     console.log(`open at login: ${settings.value.launchAtLogin ? 'on' : 'off'} (synced with the setting)`)
   }
@@ -326,6 +331,15 @@ app.on('will-quit', () => globalShortcut.unregisterAll())
 app.on('window-all-closed', () => {
   /* keep running in the menu bar */
 })
+
+// A stop signal (the Mac installer's preinstall, a logout, `kill`) quits the normal way, so a
+// recording in progress is stopped and saved first (before-quit below) instead of being cut off.
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
+  process.on(signal, () => {
+    console.log(`${signal}: quitting`)
+    app.quit()
+  })
+}
 
 let quitting = false
 app.on('before-quit', (e) => {

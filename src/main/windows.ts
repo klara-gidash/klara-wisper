@@ -1,5 +1,6 @@
 import { app, BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
+import { settings } from './settings'
 
 type Route = 'library' | 'live' | 'pill'
 
@@ -36,6 +37,9 @@ export function broadcast(channel: string, payload?: unknown): void {
 }
 
 export function showLibrary(route = 'library'): BrowserWindow {
+  // Until the install wizard is finished, opening the app (Dock, Start menu, a second launch) goes
+  // back to it: a wizard closed by mistake must not leave a half-installed app on the main screen.
+  if (route === 'library' && !settings.value.onboarded) route = 'onboarding'
   let win = windows.library
   if (!win || win.isDestroyed()) {
     win = new BrowserWindow({

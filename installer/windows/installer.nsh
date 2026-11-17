@@ -22,7 +22,9 @@
 
 !macro customUnInstall
   ${ifNot} ${isUpdated}
-    IfFileExists "$INSTDIR\${APP_EXECUTABLE_FILENAME}" 0 +2
+    ; The pause lets Chromium's helper processes of that run close their files in the data folder.
+    IfFileExists "$INSTDIR\${APP_EXECUTABLE_FILENAME}" 0 +3
       ExecWait '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --cleanup'
+      Sleep 2000
   ${endIf}
 !macroend

@@ -8,7 +8,7 @@ import { invoke } from '../lib/api'
 const GOOGLE_SETTINGS = 'https://calendar.google.com/calendar/r/settings'
 
 /** Google Calendar through its secret iCal link: paste once, the app keeps it encrypted (src/main/googleCalendar.ts). */
-export function GoogleCalendarSection() {
+export function GoogleCalendarSection({ onChange }: { onChange?: (s: GoogleCalendarState | null) => void } = {}) {
   const { t, i18n } = useTranslation()
   const [st, setSt] = useState<GoogleCalendarState | null>(null)
   const [link, setLink] = useState('')
@@ -16,6 +16,7 @@ export function GoogleCalendarSection() {
   const [msg, setMsg] = useState<{ text: string; error: boolean } | null>(null)
   const [working, setWorking] = useState(false)
   useEffect(() => void invoke<GoogleCalendarState>('gcal:state').then(setSt, () => setSt(null)), [])
+  useEffect(() => onChange?.(st), [st])
 
   // Main-process errors arrive as "Error invoking remote method 'gcal:connect': Error: gcal:notFound".
   const explain = (raw: unknown): string => {
