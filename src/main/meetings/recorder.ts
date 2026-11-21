@@ -2,7 +2,7 @@ import { shell } from 'electron'
 import { EventEmitter } from 'node:events'
 import { createWriteStream, type WriteStream } from 'node:fs'
 import { join } from 'node:path'
-import type { CalendarEvent, LiveSession, MeetingMeta, MeetingSource, RecordingMode, Segment, SpeakerInfo, Stream } from '@shared/types'
+import type { LiveSession, MeetingMeta, MeetingSource, RecordingMode, Segment, SpeakerInfo, Stream } from '@shared/types'
 import { SOURCE_LABEL } from '@shared/types'
 import { audio } from '../audio'
 import { matchEvent } from '../calendar'
@@ -11,6 +11,7 @@ import { helper } from '../helper'
 import { settings } from '../settings'
 import { createMeetingFolder, writeMeeting, writeMeta } from '../storage/files'
 import { finalizer, type FinalizeJob } from './finalize'
+import { isGenericTitle } from './titles'
 import { broadcast, showLive } from '../windows'
 
 export interface StartOptions {
@@ -24,6 +25,8 @@ export interface StartOptions {
 }
 
 const BYTES_PER_SECOND = 32000
+/** App names used in default titles ("Google Meet 10:30"): such a title gives way to the calendar's. */
+export const TITLE_LABELS = Object.values(SOURCE_LABEL)
 
 export function defaultTitle(source: MeetingSource, at: Date): string {
   const time = at.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
@@ -73,6 +76,13 @@ class Recorder extends EventEmitter {
     })
     engine.on('speaking', (m) => this.forMe(m) && broadcast('live:speaking', { stream: m.stream, value: m.value }))
     engine.on('progress', (m) => this.forMe(m) && broadcast('live:progress', m))
+    // The helper crashed and came back mid-call: its capture is gone, reopen the other side's audio
+    // (the microphone is reopened by audio.ts).
+    helper.on('restarted', () => {
+      if (this.live?.mode !== 'meeting' || this.live.phase !== 'recording') return
+      console.log(`recording ${this.live.id}: helper restarted, reopening the call audio`)
+      void this.startSystemAudio(this.live.id)
+    })
   }
 
   private forMe(m: { id?: string }): boolean {
@@ -87,16 +97,16 @@ class Recorder extends EventEmitter {
     if (this.live) throw new Error('already recording')
     if (engine.status.state !== 'ready') throw new Error('engine not ready')
     const startedAt = new Date()
-    let event: CalendarEvent | null = null
-    if (opts.mode === 'meeting' || opts.source === 'inperson') event = await matchEvent(startedAt, opts).catch(() => null)
-    const title = opts.title || event?.title || defaultTitle(opts.source, startedAt)
+    // The calendar lookup can take a while (a Google fetch): the microphone opens first, the
+    // event's title and attendees are applied when it answers (matchCalendar).
+    const title = opts.title || defaultTitle(opts.source, startedAt)
     const folder = createMeetingFolder({ startedAt: startedAt.toISOString(), source: opts.source, title })
     const id = `m_${startedAt.getTime().toString(36)}${Math.random().toString(36).slice(2, 6)}`
     const streams: Stream[] = opts.mode === 'meeting' ? ['mic', 'system'] : ['mic']
 
     this.meta = {
       id, title, source: opts.source, mode: opts.mode, startedAt: startedAt.toISOString(), folder,
-      status: 'recording', calendarEvent: event, attendees: event?.attendees ?? [], speakers: {},
+      status: 'recording', calendarEvent: null, attendees: [], speakers: {},
       bookmarks: [], appName: opts.appName, url: opts.url
     }
     writeMeta(folder, this.meta)
@@ -120,6 +130,7 @@ class Recorder extends EventEmitter {
       id, mode: opts.mode, source: opts.source, title, startedAt: this.meta.startedAt,
       paused: false, phase: 'recording', mic: null, appName: opts.appName
     }
+    if (opts.mode === 'meeting' || opts.source === 'inperson') void this.matchCalendar(id, startedAt, opts)
     try {
       await audio.acquireMic('meeting', opts.micUids ?? [])
     } catch (err) {
@@ -132,10 +143,32 @@ class Recorder extends EventEmitter {
     this.live.mic = audio.current?.name ?? null
     this.lastCallSound = Date.now()
     this.statsTimer = setInterval(() => this.logLevels(), 30_000)
+    console.log(`call recording started ${id} folder=${folder}`)
     console.log(`recording ${id}: ${opts.mode} ${opts.source} "${title}" via ${opts.appName ?? 'manual'} · mic "${this.live.mic}" · detector ${this.detectorKey ?? '-'}`)
     this.publish()
     showLive()
     return this.live
+  }
+
+  /** Calendar event of the call (looked up in the background): attendees, and its title over a generic one. */
+  private async matchCalendar(id: string, startedAt: Date, opts: StartOptions): Promise<void> {
+    const event = await matchEvent(startedAt, opts).catch(() => null)
+    const meta = this.meta
+    if (!event || !meta || meta.id !== id) return
+    meta.calendarEvent = event
+    meta.attendees = event.attendees ?? []
+    if (event.title && meta.titleSource !== 'user' && isGenericTitle(meta.title, TITLE_LABELS)) {
+      meta.title = event.title
+      meta.titleSource = 'calendar'
+      if (this.live?.id === id) this.live.title = event.title
+      this.publish()
+    }
+    try {
+      writeMeta(meta.folder, meta)
+    } catch (err) {
+      console.warn('saving the calendar match failed', String(err))
+    }
+    console.log(`recording ${id}: calendar event "${event.title}"`)
   }
 
   private async startSystemAudio(id: string, attempt = 1): Promise<void> {
@@ -206,7 +239,9 @@ class Recorder extends EventEmitter {
       const st = this.stats[k]
       return st.n ? `${k} avg ${Math.round(st.sum / st.n)} max ${Math.round(st.max)} dB` : `${k} no audio`
     }
-    console.log(`recording ${this.live.id} levels (30s): ${f('mic')} | ${this.live.mode === 'meeting' ? f('system') : ''} | text behind live: up to ${Math.round(this.maxLag)}s`)
+    const lines = { mic: 0, system: 0 }
+    for (const seg of this.segments.values()) if (seg.stream === 'mic' || seg.stream === 'system') lines[seg.stream]++
+    console.log(`recording ${this.live.id} levels (30s): ${f('mic')} | ${this.live.mode === 'meeting' ? f('system') : ''} | text behind live: up to ${Math.round(this.maxLag)}s | lines mic=${lines.mic} system=${lines.system}`)
     this.maxLag = 0
     this.stats = { mic: { sum: 0, n: 0, max: -120 }, system: { sum: 0, n: 0, max: -120 } }
   }

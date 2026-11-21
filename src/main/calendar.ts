@@ -1,9 +1,12 @@
 import { execFile } from 'node:child_process'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { CalendarEvent, MeetingSource } from '@shared/types'
 import { mergeEvents } from '@shared/ical'
-import { googleEvents, googleLinked } from './googleCalendar'
+import { googleCalendarName, googleEvents, googleLinked, googleReadable } from './googleCalendar'
 import { helper } from './helper'
+import { dataDir } from './paths'
 import { settings } from './settings'
 
 const run = promisify(execFile)
@@ -23,7 +26,11 @@ export async function requestCalendar(): Promise<string> {
   let r = await ask()
   if (r.result !== 'granted' && r.ms < 2000 && process.platform === 'darwin') {
     console.log(`calendar: macOS answered "${r.result}" without asking; clearing Klara Wisper's calendar permission and asking again`)
-    await run('/usr/bin/tccutil', ['reset', 'Calendar', 'io.klara.wisper'], { timeout: 10_000 }).catch((err) => console.warn('calendar: tccutil reset failed', err))
+    // The helper disclaims responsibility (Disclaim.swift), so macOS records the grant under the
+    // helper's own id; the app's id is cleared too for builds where the app asked.
+    for (const id of ['io.klara.wisper.helper', 'io.klara.wisper']) {
+      await run('/usr/bin/tccutil', ['reset', 'Calendar', id], { timeout: 10_000 }).catch((err) => console.warn(`calendar: tccutil reset ${id} failed`, err))
+    }
     r = await ask()
   }
   console.log(`calendar: ${r.result}`)
@@ -37,16 +44,108 @@ export async function requestCalendar(): Promise<string> {
  */
 const plainIso = (d: Date): string => d.toISOString().replace(/\.\d{3}Z$/, 'Z')
 
-/** The Mac calendar's events and, when its link is saved, Google Calendar's (counted once when both have them). */
-export async function eventsBetween(from: Date, to: Date): Promise<CalendarEvent[]> {
+export interface CalendarLookup {
+  events: CalendarEvent[]
+  /** The Mac calendar answered with access granted. */
+  mac: boolean
+  /** Google's link is saved and its feed (fresh or last good copy) could be read. */
+  google: boolean
+  /** At least one source was readable: an empty `events` then really means "no events". */
+  readable: boolean
+}
+
+/**
+ * The Mac calendar's events and, when its link is saved, Google Calendar's (counted once when both
+ * have them), and whether any source could actually be read: with none readable, an empty list means
+ * "don't know", not "no meeting" (so callers must not stamp, clear or cache on it).
+ */
+export async function lookupBetween(from: Date, to: Date): Promise<CalendarLookup> {
   const [mac, google] = await Promise.all([
     helper.request('calendarEvents', { from: plainIso(from), to: plainIso(to) }).then(
-      (r) => (r.events ?? []) as CalendarEvent[],
-      () => []
+      (r) => ({ events: (r.events ?? []) as CalendarEvent[], ok: r.status === 'granted' }),
+      () => ({ events: [] as CalendarEvent[], ok: false })
     ),
-    googleEvents(from, to).catch(() => [])
+    (async () => {
+      if (!googleLinked()) return { events: [] as CalendarEvent[], ok: false }
+      const events = await googleEvents(from, to).catch(() => [] as CalendarEvent[])
+      const state = await googleReadable().catch(() => null)
+      return { events, ok: !!state?.ok }
+    })()
   ])
-  return google.length ? mergeEvents(mac, google) : mac
+  const events = google.events.length ? mergeEvents(mac.events, google.events) : mac.events
+  return { events, mac: mac.ok, google: google.ok, readable: mac.ok || google.ok }
+}
+
+export async function eventsBetween(from: Date, to: Date): Promise<CalendarEvent[]> {
+  return (await lookupBetween(from, to)).events
+}
+
+/** Whether any calendar source can be read right now (for finalize: don't stamp calendarChecked otherwise). */
+export async function calendarReadable(): Promise<boolean> {
+  const now = new Date()
+  return (await lookupBetween(now, new Date(now.getTime() + 60_000))).readable
+}
+
+/**
+ * The calendars "coming up" shows. By default the account's own calendars (macOS names them after
+ * the email address) plus the Google link's calendar; when there are neither, all of them. A hand-made
+ * choice (settings.calendars) is kept, but the Google link's calendar is always added, so linking
+ * Google never hides it, and linking it never hides Mac calendars shown before (it only adds a name).
+ */
+export function shownCalendars(names: string[]): Set<string> {
+  const gname = googleCalendarName()
+  const chosen = settings.value.calendars
+  if (chosen) return new Set(gname ? [...chosen, gname] : chosen)
+  const own = names.filter((n) => n.includes('@'))
+  const def = [...own, ...(gname && names.includes(gname) && !own.includes(gname) ? [gname] : [])]
+  return new Set(def.length ? def : names)
+}
+
+const UPCOMING_FILE = (): string => join(dataDir, 'upcoming.json')
+
+/**
+ * Writes what Claude's list_upcoming_meetings reads. A list produced while no calendar could be read
+ * never replaces a non-empty cache (an old list beats an empty one; the MCP server shows its age).
+ */
+export function writeUpcomingCache(events: CalendarEvent[], readable = true): void {
+  try {
+    if (!events.length && !readable) {
+      const old = JSON.parse(readFileSync(UPCOMING_FILE(), 'utf8')) as { events?: unknown[] }
+      if (old.events?.length) return
+    }
+  } catch {
+    /* no cache yet */
+  }
+  try {
+    writeFileSync(UPCOMING_FILE(), JSON.stringify({ at: new Date().toISOString(), events }))
+  } catch {
+    /* not critical */
+  }
+}
+
+/** The next 7 days, filtered like the home screen, into upcoming.json. */
+export async function refreshUpcomingCache(): Promise<void> {
+  const from = new Date()
+  const to = new Date(from)
+  to.setHours(0, 0, 0, 0)
+  to.setDate(to.getDate() + 7)
+  const r = await lookupBetween(from, to)
+  const all = r.events.filter((e) => new Date(e.end).getTime() > Date.now())
+  const shown = shownCalendars([...new Set(all.map((e) => e.calendar))])
+  writeUpcomingCache(all.filter((e) => shown.has(e.calendar)), r.readable)
+}
+
+let upcomingTimer: NodeJS.Timeout | null = null
+/**
+ * Keeps upcoming.json fresh from the main process (at start and every 5 minutes), so Claude sees the
+ * calendar even when no window is open. Safe to call more than once.
+ */
+export function startUpcomingRefresh(everyMs = 5 * 60_000): void {
+  if (upcomingTimer) return
+  const tick = (): void => void refreshUpcomingCache().catch((err) => console.warn('calendar: upcoming refresh failed', err))
+  setTimeout(tick, 5_000).unref?.() // give the helper a moment to start
+  upcomingTimer = setInterval(tick, everyMs)
+  upcomingTimer.unref?.()
 }
 
 export async function upcoming(hours = 36): Promise<CalendarEvent[]> {
@@ -92,13 +191,26 @@ export const matchVersion = (): number => (googleLinked() ? MATCH_VERSION * 10 +
  * Once the call has ended `durationSec` is known and the overlap counts; at the start only the moment does.
  */
 export async function matchEvent(at: Date, hint: { source: MeetingSource; url?: string; durationSec?: number }): Promise<CalendarEvent | null> {
+  return (await matchEventChecked(at, hint)).event
+}
+
+/**
+ * matchEvent, plus whether any calendar could be read. `readable: false` means the null event is
+ * "unknown", so the caller must not mark the meeting calendarChecked (it is looked up again later).
+ */
+export async function matchEventChecked(
+  at: Date,
+  hint: { source: MeetingSource; url?: string; durationSec?: number }
+): Promise<{ event: CalendarEvent | null; readable: boolean }> {
   const t0 = at.getTime()
   const t1 = t0 + Math.max(0, hint.durationSec ?? 0) * 1000
-  const events = await eventsBetween(new Date(t0 - 3 * 3600_000), new Date(t1 + 3 * 3600_000))
+  const r = await lookupBetween(new Date(t0 - 3 * 3600_000), new Date(t1 + 3 * 3600_000))
+  const events = r.events
+  const done = (event: CalendarEvent | null): { event: CalendarEvent | null; readable: boolean } => ({ event, readable: r.readable })
   const code = meetCode(hint.url)
   const zid = zoomId(hint.url)
   const byLink = events.find((e) => e.links.some((l) => (code && meetCode(l) === code) || (zid && zoomId(l) === zid)))
-  if (byLink) return byLink
+  if (byLink) return done(byLink)
 
   const span = (e: CalendarEvent): [number, number] => [new Date(e.start).getTime(), new Date(e.end).getTime()]
   const overlap = (e: CalendarEvent): number => {
@@ -112,8 +224,8 @@ export async function matchEvent(at: Date, hint: { source: MeetingSource; url?: 
   }
   const withPeople = (e: CalendarEvent): boolean => e.attendees.some((a) => !a.isMe) || e.links.length > 0
   const meetingSized = (e: CalendarEvent): boolean => span(e)[1] - span(e)[0] <= 4 * 3600_000
-  const shown = settings.value.calendars
-  const visible = (e: CalendarEvent): boolean => !shown || shown.includes(e.calendar)
+  const shown = settings.value.calendars ? shownCalendars([]) : null
+  const visible = (e: CalendarEvent): boolean => !shown || shown.has(e.calendar)
   const own = (e: CalendarEvent): boolean => e.calendar.includes('@')
   const host = SOURCE_HOSTS[hint.source]
   const candidates = events.filter((e) => fits(e) && withPeople(e) && meetingSized(e) && visible(e))
@@ -124,5 +236,5 @@ export async function matchEvent(at: Date, hint: { source: MeetingSource; url?: 
     return Math.max(0, overlap(e)) / (Math.max(t1, f) - Math.min(t0, s))
   }
   const score = (e: CalendarEvent): number => (host && e.links.some((l) => host.test(l)) ? 4 : 0) + (own(e) ? 2 : 0) + timeFit(e)
-  return candidates.sort((a, b) => score(b) - score(a))[0] ?? null
+  return done(candidates.sort((a, b) => score(b) - score(a))[0] ?? null)
 }

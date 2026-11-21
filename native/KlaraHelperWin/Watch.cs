@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
@@ -13,7 +14,7 @@ namespace KlaraHelper;
 public sealed class MeetingWatcher
 {
     private const string Store = @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
-    public static readonly string[] Browsers = ["chrome.exe", "msedge.exe", "brave.exe", "firefox.exe", "vivaldi.exe", "opera.exe", "arc.exe"];
+    public static readonly string[] Browsers = ["chrome.exe", "msedge.exe", "brave.exe", "firefox.exe", "vivaldi.exe", "opera.exe", "arc.exe", "zen.exe"];
     private static readonly string[] Ours = ["klarahelper.exe", "klara wisper.exe"];
 
     private Timer? timer;
@@ -33,8 +34,25 @@ public sealed class MeetingWatcher
     private static bool InUse(RegistryKey k) =>
         k.GetValue("LastUsedTimeStop") is long stop && stop == 0 && k.GetValue("LastUsedTimeStart") is long start && start != 0;
 
-    public static List<Dictionary<string, object?>> Users()
+    /// Executable names (lower case, without ".exe") of the processes running right now.
+    public static HashSet<string> RunningExeNames()
     {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in Process.GetProcesses())
+        {
+            try { names.Add(p.ProcessName.ToLowerInvariant()); }
+            catch { /* exited meanwhile */ }
+            finally { p.Dispose(); }
+        }
+        return names;
+    }
+
+    /// `running`: process names from RunningExeNames() (once per tick). A desktop app's entry is only
+    /// believed while that app runs: an entry left "in use" by a crash (LastUsedTimeStop never written)
+    /// otherwise looks like a call that never ends.
+    public static List<Dictionary<string, object?>> Users(HashSet<string>? running = null)
+    {
+        running ??= RunningExeNames();
         var users = new List<Dictionary<string, object?>>();
         using var root = Registry.CurrentUser.OpenSubKey(Store);
         if (root == null) return users;
@@ -50,6 +68,7 @@ public sealed class MeetingWatcher
                     if (k == null || !InUse(k)) continue;
                     var exe = app.Split('#').Last().ToLowerInvariant(); // "C:#Program Files#Zoom#bin#Zoom.exe"
                     if (Ours.Contains(exe)) continue;
+                    if (!running.Contains(Path.GetFileNameWithoutExtension(exe))) continue; // stale entry
                     users.Add(User(exe, Path.GetFileNameWithoutExtension(exe)));
                 }
             }
@@ -98,7 +117,7 @@ public sealed class MeetingWatcher
     {
         try
         {
-            var users = Users();
+            var users = Users(RunningExeNames()); // the process list is read once per tick
             var browsers = users.Select(u => (string)u["bundleID"]!).Where(id => Browsers.Contains(id)).ToList();
             if (browsers.Count == 0) tabs = new();
             else if ((DateTime.UtcNow - lastTabsCheck).TotalSeconds >= 3)

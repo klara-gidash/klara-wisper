@@ -114,7 +114,8 @@ const BROWSERS: { prefix: string; name: string; tabsKey: string[] }[] = [
  * window title ("Meet - abc-defg-hij - Google Chrome"); the title is matched without the browser name.
  */
 const WEB_TITLES: { re: RegExp; source: MeetingSource; clean: (t: string) => string }[] = [
-  { re: /^Meet\s*[-–—:]\s*[a-z]{3}-[a-z]{4}-[a-z]{3}\b|\bGoogle Meet\b/i, source: 'meet', clean: (t) => t.replace(/^Meet\s*[-–—:]\s*/i, '').replace(/\s*[-–—]\s*Google Meet$/i, '') },
+  // "Meet - abc-defg-hij", and once joined from the calendar "Meet – Weekly sync" / "Meet - שם הפגישה".
+  { re: /^Meet\s*[-–—:]\s*\S|\bGoogle Meet\b/i, source: 'meet', clean: (t) => t.replace(/^Meet\s*[-–—:]\s*/i, '').replace(/\s*[-–—]\s*Google Meet$/i, '') },
   { re: /\|\s*Microsoft Teams\b/i, source: 'teams', clean: (t) => t.replace(/\s*\|\s*Microsoft Teams.*$/i, '') },
   { re: /\bZoom (Meeting|Workplace|Webinar)\b/i, source: 'zoom', clean: () => '' },
   { re: /\bHuddle\b.*\bSlack\b|\bSlack\b.*\bHuddle\b/i, source: 'slack', clean: () => '' },
@@ -239,6 +240,8 @@ export class Detector extends EventEmitter {
   private parked = new Map<string, number>()
   /** Last meeting tab seen per browser, for the moments its tabs can't be read. */
   private lastWeb = new Map<string, string>()
+  /** Keys recognised by a Windows window title (only the active tab's title is visible there). */
+  private titleKeys = new Set<string>()
   private enabled: (source: MeetingSource) => boolean
   private timer: NodeJS.Timeout
 
@@ -362,6 +365,7 @@ export class Detector extends EventEmitter {
       // Titles change during a call (Teams shows the current view), so the key is per browser.
       const key = `web:${w.source}:${w.source === 'slack' ? 'slack' : browser.name}`
       this.lastWeb.set(browser.name, key)
+      this.titleKeys.add(key)
       return {
         key,
         source: w.source,
@@ -370,6 +374,11 @@ export class Detector extends EventEmitter {
         micUids: u.inputDevices
       }
     }
+    // Windows sees only the active tab's title: switching to another tab mid-call hides the meeting.
+    // While the same browser still holds the mic, it's still that call (not a new, unknown one).
+    const prev = this.lastWeb.get(browser.name)
+    const ps = prev && this.titleKeys.has(prev) ? this.seen.get(prev) : undefined
+    if (ps) return { ...ps.cand, micUids: u.inputDevices }
     // The browser is on a call we can't identify (no meeting tab, or no permission to read tabs).
     return { key: `web:unknown:${browser.name}`, source: 'other', appName: browser.name, micUids: u.inputDevices }
   }
@@ -410,5 +419,6 @@ export class Detector extends EventEmitter {
     // stayed dismissed forever, and e.g. every later Zoom call (always "app:zoom") was ignored.
     for (const key of this.dismissed.keys()) if (!this.seen.has(key)) this.dismissed.delete(key)
     for (const [browser, key] of this.lastWeb) if (!this.seen.has(key)) this.lastWeb.delete(browser)
+    for (const key of this.titleKeys) if (!this.seen.has(key)) this.titleKeys.delete(key)
   }
 }

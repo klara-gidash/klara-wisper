@@ -231,3 +231,28 @@ test('three calls in a row: three recordings, each closed before the next', asyn
   assert.equal(t.recordings.length, 3)
   assert.deepEqual(t.recordings.map((r) => r.stopped), [true, true, false])
 })
+
+test('Windows: an unknown call in the same browser during a title-recognised Meet keeps the recording', async () => {
+  const t = setup()
+  const meet: Candidate = { key: 'web:meet:Chrome', source: 'meet', appName: 'Chrome', micUids: [] }
+  const unknown: Candidate = { key: 'web:unknown:Chrome', source: 'other', appName: 'Chrome', micUids: [] }
+  await t.calls.onStart(meet)
+  t.advance(60_000)
+  t.calls.onEnd(meet.key)
+  t.advance(15_000)
+  await t.calls.onStart(unknown)
+  t.advance(10 * 60_000)
+  // The meeting tab comes back: the detector ends the stand-in and starts the Meet key again.
+  t.calls.onEnd(unknown.key)
+  await t.calls.onStart(meet)
+  assert.equal(t.recordings.length, 1)
+  assert.equal(t.recordings[0].stopped, false)
+  assert.equal(t.asked.length, 0)
+})
+
+test('an unknown call in another browser during a Meet is not merged into it', async () => {
+  const t = setup()
+  await t.calls.onStart({ key: 'web:meet:Chrome', source: 'meet', appName: 'Chrome', micUids: [] })
+  await t.calls.onStart({ key: 'web:unknown:Edge', source: 'other', appName: 'Edge', micUids: [] })
+  assert.deepEqual(t.det.released, ['web:unknown:Edge'])
+})

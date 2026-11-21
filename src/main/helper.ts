@@ -11,7 +11,8 @@ type Pending = { resolve: (v: any) => void; reject: (e: Error) => void; timer: N
  * calendar). Talks newline-delimited JSON over stdio; restarts itself if it crashes.
  *
  * Events: 'hello', 'audio' {stream, pcm(base64), db}, 'micUsers', 'devices', 'hotkey', 'key',
- * 'systemRestarted', 'error', 'exit'.
+ * 'systemRestarted', 'error', 'exit', and 'restarted' (a new helper said hello after the previous one
+ * exited while running: its mic and call-audio captures are gone and must be reopened).
  */
 export class Helper extends EventEmitter {
   private proc: ChildProcessWithoutNullStreams | null = null
@@ -19,6 +20,8 @@ export class Helper extends EventEmitter {
   private nextId = 1
   private restarts = 0
   private stopping = false
+  /** A helper process said hello before (so the next hello is a restart). */
+  private wasReady = false
   ready = false
 
   start(): void {
@@ -50,6 +53,7 @@ export class Helper extends EventEmitter {
 
   stop(): void {
     this.stopping = true
+    this.wasReady = false
     this.proc?.kill('SIGTERM')
   }
 
@@ -69,11 +73,14 @@ export class Helper extends EventEmitter {
       else p.reject(new Error(msg.error ?? 'helper error'))
       return
     }
+    const restarted = msg.event === 'hello' && this.wasReady
     if (msg.event === 'hello') {
       this.ready = true
+      this.wasReady = true
       this.restarts = 0
     }
     if (msg.event) this.emit(msg.event, msg)
+    if (restarted) this.emit('restarted')
   }
 
   request<T = any>(cmd: string, params: Record<string, unknown> = {}, timeoutMs = 15_000): Promise<T> {

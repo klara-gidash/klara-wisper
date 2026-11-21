@@ -222,7 +222,7 @@ public sealed class Server
         var candidates = devices.Inputs().Where(d =>
         {
             var t = Devices.Transport(d.FriendlyName);
-            return t != "virtual" && (t != "bluetooth" || d.ID == def); // opening a BT mic drops it to call quality
+            return !Devices.IsVirtual(d.FriendlyName) && (t != "bluetooth" || d.ID == def); // opening a BT mic drops it to call quality
         }).ToList();
         var levels = candidates.ToDictionary(d => d.ID, _ => new List<float>());
         var opened = new List<AudioInput>();

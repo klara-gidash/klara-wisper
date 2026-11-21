@@ -203,11 +203,36 @@ function parseDuration(value: string): number | null {
 const mailto = (v: string): string => v.replace(/^mailto:/i, '').trim()
 
 /**
- * Reads a feed. `me` is the calendar owner's address (Google: the calendar ID in the secret link),
+ * Turns the raw bytes of a feed into text. Lines are folded every 75 *bytes*, so a fold can split a
+ * multi-byte character (Hebrew is 2 bytes in UTF-8): decoding first and unfolding after turned such a
+ * character into two "?" marks. So the folds (CRLF or LF followed by a space or tab) are removed from
+ * the bytes, and only then is the result decoded as UTF-8.
+ */
+export function decodeIcs(bytes: Uint8Array): string {
+  const out = new Uint8Array(bytes.length)
+  let n = 0
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i]
+    if (b === 0x0d && bytes[i + 1] === 0x0a && (bytes[i + 2] === 0x20 || bytes[i + 2] === 0x09)) {
+      i += 2
+      continue
+    }
+    if (b === 0x0a && (bytes[i + 1] === 0x20 || bytes[i + 1] === 0x09)) {
+      i += 1
+      continue
+    }
+    out[n++] = b
+  }
+  return new TextDecoder('utf-8').decode(out.subarray(0, n))
+}
+
+/**
+ * Reads a feed (text, or the raw bytes, which unfold safely: see decodeIcs). `me` is the calendar owner's address (Google: the calendar ID in the secret link),
  * used to mark the user among the attendees and to drop the events they declined.
  */
-export function parseIcs(text: string, opts: { me?: string } = {}): IcsCalendar {
+export function parseIcs(input: string | Uint8Array, opts: { me?: string } = {}): IcsCalendar {
   const me = opts.me?.toLowerCase() ?? ''
+  const text = typeof input === 'string' ? input : decodeIcs(input)
   const lines = text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/)
   let name = ''
   let defaultTz: string | null = null

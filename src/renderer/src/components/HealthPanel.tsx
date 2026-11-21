@@ -2,17 +2,22 @@ import { AlertTriangle, Check, CircleSlash, ClipboardCopy, RefreshCw, Wrench, X 
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AppState, HealthItem, HealthReport } from '@shared/types'
+import { healthFix } from '@shared/plan'
 import { invoke, useAppState, useEvent } from '../lib/api'
 import { SetupProgress } from './SetupProgress'
 import { Button, Card, cn, Spinner } from './ui'
 
 const VC_REDIST = 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
 
-/** A failure that "Repair automatically" (rebuilding the engine, re-downloading models) can fix. */
+/** A failure the app can fix by itself: rebuilding the engine, or re-running the install (models). */
 export function repairable(report: HealthReport | null | undefined): boolean {
-  return !!report?.items.some(
-    (i) => i.status === 'fail' && (i.id === 'engine' || i.id === 'models' || i.id === 'transcribe' || i.id === 'speakers' || (i.id === 'claude' && i.code === 'serverFailed'))
-  )
+  return healthFix(report?.items) !== null
+}
+
+/** The fix for the report: a broken engine is rebuilt; only a model or slow transcription is retried (the engine stays). */
+export function fixAction(report: HealthReport | null | undefined): 'setup:repair' | 'setup:retry' | null {
+  const fix = healthFix(report?.items)
+  return fix === 'repair' ? 'setup:repair' : fix === 'retry' ? 'setup:retry' : null
 }
 
 function Icon({ status }: { status: HealthItem['status'] }) {
@@ -77,10 +82,11 @@ export function HealthPanel({
   }, [installing, phase])
 
   const repair = async (): Promise<void> => {
+    const action = fixAction(report) ?? 'setup:retry'
     want.current = true // check again once the repair has installed everything
     setReport(null)
     setItems(null)
-    await invoke('setup:repair').catch(() => undefined)
+    await invoke(action).catch(() => undefined)
     // A repair that stopped at once (e.g. a file it could not delete) never shows as installing.
     setTimeout(() => void invoke<AppState>('state').then((s) => !s.setup.running && runIfWanted()), 1000)
   }
@@ -158,8 +164,8 @@ export function HealthPanel({
       )}
       <div className="flex flex-wrap items-center gap-2">
         {needsRepair && (
-          <Button variant="primary" icon={<Wrench size={14} />} disabled={running || installing} onClick={() => void repair()}>
-            {t('wiz.healthRepair')}
+          <Button variant="primary" icon={fixAction(report) === 'setup:retry' ? <RefreshCw size={14} /> : <Wrench size={14} />} disabled={running || installing} onClick={() => void repair()}>
+            {fixAction(report) === 'setup:retry' ? t('onb.setupRetry') : t('wiz.healthRepair')}
           </Button>
         )}
         <Button icon={running ? <Spinner /> : <RefreshCw size={14} />} disabled={running || installing} onClick={() => void run()}>

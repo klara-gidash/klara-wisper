@@ -6,9 +6,9 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ClaudeAuto, HealthReport, PreflightReport } from '@shared/types'
-import { blocked, DEFAULT_WISHES, recommend, tierOf, type Plan, type Problem, type Use, type Wishes } from '@shared/plan'
+import { blocked, DEFAULT_WISHES, recommend, resumeSetupAtLaunch, tierOf, type Plan, type Problem, type Use, type Wishes } from '@shared/plan'
 import { GoogleCalendarSection } from '../components/GoogleCalendarSection'
-import { HealthPanel, repairable } from '../components/HealthPanel'
+import { fixAction, HealthPanel, repairable } from '../components/HealthPanel'
 import { askAll, PermissionList } from '../components/Permissions'
 import { SetupProgress } from '../components/SetupProgress'
 import { Button, Card, cn, Kbd, Segmented, Spinner, Toggle } from '../components/ui'
@@ -40,7 +40,15 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [wishes, setWishes] = useState<Wishes>(app?.settings.wishes ?? DEFAULT_WISHES)
   const [planned, setPlanned] = useState<Plan | null>(null)
   const [name, setName] = useState(app?.settings.userName ?? '')
-  const [step, setStep] = useState<Step>('welcome')
+  // Quit mid-install (a plan was already chosen): the install carries on at launch, so open at its step.
+  const [step, setStep] = useState<Step>(app && resumeSetupAtLaunch(app.settings) ? 'install' : 'welcome')
+  // The app state may arrive after the first render: resume at the install step then too (once).
+  const resumed = useRef(false)
+  useEffect(() => {
+    if (!app || resumed.current) return
+    resumed.current = true
+    if (resumeSetupAtLaunch(app.settings)) setStep((s) => (s === 'welcome' ? 'install' : s))
+  }, [app])
   const [health, setHealth] = useState<HealthReport | null>(null)
   const [askedAll, setAskedAll] = useState(false)
   const [asking, setAsking] = useState(false)
@@ -133,7 +141,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     else if (health.ok) primary = { label: t('wiz.next'), onClick: next }
     else if (repairable(health)) {
       // The fix is the main button; the health check runs again by itself when it's done.
-      primary = { label: t('wiz.healthRepair'), onClick: () => void invoke('setup:repair').catch(() => undefined) }
+      // Only a model or slow transcription: try again, keeping the working engine.
+      const action = fixAction(health)!
+      primary = { label: action === 'setup:retry' ? t('onb.setupRetry') : t('wiz.healthRepair'), onClick: () => void invoke(action).catch(() => undefined) }
       secondary = { label: t('wiz.continueAnyway'), onClick: next }
     } else primary = { label: t('wiz.continueAnyway'), onClick: next, quiet: true }
   }

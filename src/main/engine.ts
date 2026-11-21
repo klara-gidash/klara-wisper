@@ -5,7 +5,8 @@ import { existsSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import type { EngineStatus } from '@shared/types'
 import { dataDir, engineDir, enginePython, modelsDir } from './paths'
-import { asrChoice, missingModels, setup, syncEngineCode } from './setup'
+import { asrChoice, missingModels, PY_UTF8, setup, syncEngineCode } from './setup'
+import { engineErrorLines } from '@shared/plan'
 import { settings } from './settings'
 
 /**
@@ -51,7 +52,7 @@ export class Engine extends EventEmitter {
         KLARA_MODELS_DIR: modelsDir,
         HF_HUB_OFFLINE: '1',
         TOKENIZERS_PARALLELISM: 'false',
-        PYTHONUTF8: '1', // Windows: read and write text as UTF-8 whatever the system's code page is
+        ...PY_UTF8, // Windows: read and write text as UTF-8 whatever the system's code page is
         ...(asrChoice() ? { KLARA_ASR_MODEL: asrChoice()! } : {}), // Settings > transcription model
         KLARA_ASR_LANGUAGE: settings.value.asrLanguage === 'auto' ? 'auto' : 'he'
       },
@@ -70,8 +71,9 @@ export class Engine extends EventEmitter {
       }
     })
     proc.stderr!.on('data', (d) => {
-      const s = String(d)
-      if (/Warning|warn\(|redirects|Loading weights/i.test(s)) return
+      // Per line: a chunk with a warning may also carry an ImportError or DLL traceback.
+      const s = engineErrorLines(String(d))
+      if (!s) return
       console.warn(`[engine] ${s.trim()}`)
       this.lastErrors = (this.lastErrors + s).slice(-2000) // for the health check's report
     })

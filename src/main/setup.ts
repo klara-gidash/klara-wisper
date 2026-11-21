@@ -3,16 +3,17 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { createInterface } from 'node:readline'
 import { promisify } from 'node:util'
 import type { SetupState } from '@shared/types'
-import { classifyFailure, MODEL_GB, type FailureKind } from '@shared/plan'
+import { classifyFailure, isEngineCodeFile, MODEL_GB, retryableFsError, type FailureKind } from '@shared/plan'
 import { settings } from './settings'
 import {
   bundledEngineSource, dataDir, engineDir, enginePython, isWindows, managedEngineDir, managesEngine, modelsDir, uvPath
 } from './paths'
 import { freeGB, proxyEnv } from './preflight'
+import { stopEngineProcesses } from './uninstall'
 
 /**
  * First-launch setup of an installed app, so it needs nothing but itself:
@@ -39,6 +40,9 @@ const ENGINE_NEEDS_GB = 2.5 // unpacked packages + the download cache next to th
 const VC_REDIST_URL = 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
 const execFileP = promisify(execFile)
 
+/** Every Python launch: UTF-8 everywhere (a Hebrew Windows profile folder breaks .pth loading otherwise). */
+export const PY_UTF8 = { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } as const
+
 const root = managedEngineDir
 const stampFile = join(root, 'installed.json')
 const srcDir = join(root, 'src')
@@ -46,12 +50,48 @@ const srcDir = join(root, 'src')
 interface Stamp {
   lock: string
   app: string
+  /** Hash of the engine code shipped in the app (pyproject, uv.lock, the .py files). */
+  code?: string
 }
 
 function lockHash(dir: string): string {
   const h = createHash('sha256')
   for (const f of ['pyproject.toml', 'uv.lock']) h.update(readFileSync(join(dir, f)))
   return h.digest('hex')
+}
+
+/** Hash of the bundled engine: pyproject.toml, uv.lock and every .py file (sorted, path included). */
+export function codeHash(dir: string): string {
+  const h = createHash('sha256')
+  const files: string[] = []
+  const walk = (d: string): void => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name)
+      if (e.isDirectory()) {
+        if (e.name !== '__pycache__') walk(p)
+      } else if (isEngineCodeFile(relative(dir, p))) files.push(p)
+    }
+  }
+  for (const f of ['pyproject.toml', 'uv.lock']) files.push(join(dir, f))
+  walk(join(dir, 'klara_engine'))
+  for (const f of files.sort()) {
+    h.update(relative(dir, f).replace(/\\/g, '/') + '\0')
+    h.update(readFileSync(f))
+  }
+  return h.digest('hex')
+}
+
+/** Deletes a folder; Windows keeps files of a Python that just exited (or an antivirus scan) busy for a moment. */
+export async function rmRetry(path: string, tries = 5): Promise<void> {
+  for (let n = 1; ; n++) {
+    try {
+      rmSync(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
+      return
+    } catch (err) {
+      if (n >= tries || !retryableFsError(err)) throw err
+      await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** (n - 1)))
+    }
+  }
 }
 
 function readStamp(): Stamp | null {
@@ -106,10 +146,16 @@ export function syncEngineCode(): void {
   if (!managesEngine() || !existsSync(enginePython())) return
   const stamp = readStamp()
   const pth = join(sitePackages(), 'klara_engine.pth')
-  if (stamp?.app === app.getVersion() && existsSync(join(srcDir, 'klara_engine')) && existsSync(pth)) return
+  let code = ''
+  try {
+    code = codeHash(bundledEngineSource())
+  } catch (err) {
+    console.warn('engine code hash failed', String(err))
+  }
+  if (stamp?.app === app.getVersion() && (!code || stamp.code === code) && existsSync(join(srcDir, 'klara_engine')) && existsSync(pth)) return
   copySource()
   writeFileSync(pth, srcDir + '\n')
-  if (stamp) writeFileSync(stampFile, JSON.stringify({ ...stamp, app: app.getVersion() }))
+  if (stamp) writeFileSync(stampFile, JSON.stringify({ ...stamp, app: app.getVersion(), ...(code ? { code } : {}) }))
 }
 
 function copySource(): void {
@@ -231,7 +277,7 @@ class Setup extends EventEmitter {
       if (managesEngine()) {
         rmSync(stampFile, { force: true })
         // Windows keeps the files of a Python that just exited locked for a moment: retry the delete.
-        rmSync(join(root, '.venv'), { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
+        await rmRetry(join(root, '.venv'), 6)
       }
       for (const key of badModels.filter((k) => k in MODEL_GB)) {
         rmSync(join(modelsDir, key), { recursive: true, force: true, maxRetries: 5, retryDelay: 300 })
@@ -257,6 +303,8 @@ class Setup extends EventEmitter {
     }
     if (!engineInstalled()) {
       if (!managesEngine()) throw new Error(`engine not installed at ${enginePython()}`)
+      // Windows: an MCP server Claude Desktop started keeps the venv's DLLs open ("os error 32").
+      if (isWindows && existsSync(join(root, '.venv'))) await stopEngineProcesses()
       await this.retrying(() => this.installEngine(), () => this.wipeVenv())
     }
     syncEngineCode()
@@ -273,7 +321,7 @@ class Setup extends EventEmitter {
    * Runs a step; after a network error waits and tries again (the downloads resume), after any
    * other error calls `fix` once and tries again when it says it changed something.
    */
-  private async retrying(step: () => Promise<void>, fix: (err: Error) => boolean): Promise<void> {
+  private async retrying(step: () => Promise<void>, fix: (err: Error) => boolean | Promise<boolean>): Promise<void> {
     let fixed = false
     for (let n = 0; ; n++) {
       try {
@@ -307,7 +355,7 @@ class Setup extends EventEmitter {
           this.set({ retryAt: undefined })
           continue
         }
-        if (kind === 'unknown' && !fixed && fix(err as Error)) {
+        if (kind === 'unknown' && !fixed && (await fix(err as Error))) {
           fixed = true
           console.warn(`setup: ${message}; repaired, trying once more`)
           continue
@@ -351,10 +399,11 @@ class Setup extends EventEmitter {
   }
 
   /** A half-built virtualenv (the app was quit mid-install, a file was locked…): start it over. */
-  private wipeVenv(): boolean {
+  private async wipeVenv(): Promise<boolean> {
     if (!existsSync(join(root, '.venv')) && !existsSync(join(root, 'uv-cache'))) return false
-    rmSync(join(root, '.venv'), { recursive: true, force: true })
-    rmSync(join(root, 'uv-cache'), { recursive: true, force: true })
+    if (isWindows) await stopEngineProcesses()
+    await rmRetry(join(root, '.venv'))
+    await rmRetry(join(root, 'uv-cache')).catch((err) => console.warn('uv cache not deleted', String(err)))
     return true
   }
 
@@ -417,6 +466,7 @@ class Setup extends EventEmitter {
       UV_PYTHON_PREFERENCE: 'only-managed', // never a Python already on the machine
       UV_NO_CONFIG: '1', // ignore any uv.toml of the user
       UV_PYTHON_DOWNLOADS: 'automatic',
+      ...PY_UTF8,
       UV_HTTP_TIMEOUT: '120', // slow connections: wait for a stalled download instead of failing after 30 s
       ...(this.systemCerts ? { UV_SYSTEM_CERTS: '1' } : {})
     }
@@ -447,9 +497,11 @@ class Setup extends EventEmitter {
       clearInterval(timer)
     }
     writeFileSync(join(sitePackages(), 'klara_engine.pth'), srcDir + '\n')
+    const from = bundledEngineSource()
+    writeFileSync(stampFile, JSON.stringify({ lock: lockHash(from), app: app.getVersion(), code: codeHash(from) } satisfies Stamp))
     // Packages are cloned out of the cache (copy-on-write), so the cache is only a duplicate now.
-    rmSync(cache, { recursive: true, force: true })
-    writeFileSync(stampFile, JSON.stringify({ lock: lockHash(bundledEngineSource()), app: app.getVersion() } satisfies Stamp))
+    // The install is done: a cache that won't delete (a file still busy) is only wasted space.
+    await rmRetry(cache).catch((err) => console.warn('uv cache not deleted', String(err)))
     this.set({ progress: 1 })
   }
 
@@ -498,7 +550,7 @@ class Setup extends EventEmitter {
           KLARA_DATA_DIR: dataDir,
           KLARA_MODELS_DIR: modelsDir,
           PYTHONUNBUFFERED: '1',
-          PYTHONIOENCODING: 'utf-8',
+          ...PY_UTF8,
           TOKENIZERS_PARALLELISM: 'false',
           HF_HUB_DOWNLOAD_TIMEOUT: '60', // the default (10 s) gives up on slow connections
           HF_HUB_ETAG_TIMEOUT: '30'

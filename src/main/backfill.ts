@@ -1,6 +1,5 @@
 import { SOURCE_LABEL } from '@shared/types'
-import { matchEvent, matchVersion } from './calendar'
-import { defaultTitle } from './meetings/recorder'
+import { matchEventChecked, matchVersion } from './calendar'
 import { db } from './storage/db'
 import { listMeetingFolders, readMeeting, renameMeetingFolder, writeMeeting } from './storage/files'
 import { broadcast } from './windows'
@@ -31,28 +30,29 @@ export async function matchPastMeetings(): Promise<void> {
       const redo = meta.titleSource === 'calendar'
       if (meta.calendarEvent && !redo) continue
       checked++
-      const event = await matchEvent(new Date(meta.startedAt), meta).catch(() => null)
+      const r = await matchEventChecked(new Date(meta.startedAt), meta).catch(() => ({ event: null, readable: false }))
+      // No calendar could be read (no permission, helper down, Google link off): "no event" is unknown
+      // here, so leave the meeting unstamped and untouched; it is looked up again on the next pass.
+      if (!r.readable) continue
+      const event = r.event
       meta.calendarChecked = version
       if (event) {
         matched++
-        if (redo && meta.calendarEvent?.id !== event.id) meta.attendees = []
+        if (redo && meta.calendarEvent?.id !== event.id && event.attendees.length) meta.attendees = []
         meta.calendarEvent = event
         if (!meta.attendees?.length) meta.attendees = event.attendees
         if (meta.titleSource !== 'user' && (meta.titleSource === 'calendar' || meta.titleSource === 'claude' || DEFAULT_TITLE.test(meta.title) || !meta.title)) {
           meta.title = event.title
           meta.titleSource = 'calendar'
         }
-      } else if (redo) {
-        // The older pass picked a wrong event (e.g. a shift on a shared calendar): back to the plain name.
-        meta.calendarEvent = null
-        meta.attendees = []
-        meta.title = defaultTitle(meta.source, new Date(meta.startedAt))
-        delete meta.titleSource
       }
-      if (event || redo) meta.folder = renameMeetingFolder(meta.folder, meta)
+      // An empty lookup never erases what the meeting already has: its calendar title, event and
+      // attendees stay (a calendar removed from view, a deleted invite or a half-read feed would
+      // otherwise wipe good names). It is just stamped as checked.
+      if (event) meta.folder = renameMeetingFolder(meta.folder, meta)
       writeMeeting(meta.folder, meta, m.segments)
       db().indexMeeting(meta, m.segments)
-      if (event || redo) broadcast('meetings:changed', meta.id)
+      if (event) broadcast('meetings:changed', meta.id)
     }
   } finally {
     running = false

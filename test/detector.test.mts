@@ -557,6 +557,42 @@ test('Windows: a Meet window title in Chrome counts as Meet', () => {
   assert.equal(h.starts()[0]?.source, 'meet')
 })
 
+for (const title of ['Meet – Weekly sync - Google Chrome', 'Meet - שם הפגישה - Google Chrome']) {
+  test(`Windows: a Meet tab titled with the meeting name counts as Meet (${title})`, () => {
+    const h = harness()
+    h.mic(['chrome.exe'], { 'chrome.exe': [{ url: '', title }] })
+    h.wait(4_000)
+    const s = h.starts()
+    assert.equal(s[0]?.source, 'meet')
+    assert.equal(s[0]?.cand.title, title.replace(/^Meet\s*[-–]\s*/, '').replace(/ - Google Chrome$/, ''))
+  })
+}
+
+test('Windows: switching to another tab mid-call keeps the Meet call (no split, no unknown call)', () => {
+  const h = harness()
+  const meet = { 'chrome.exe': [{ url: '', title: 'Meet - abc-defg-hij - Google Chrome' }] }
+  const other = { 'chrome.exe': [{ url: '', title: 'Inbox - Gmail - Google Chrome' }] }
+  h.mic(['chrome.exe'], meet)
+  h.wait(5_000)
+  for (let i = 0; i < 60; i++) {
+    h.mic(['chrome.exe'], other)
+    h.wait(1_000)
+  }
+  h.mic(['chrome.exe'], meet)
+  h.wait(5_000)
+  assert.deepEqual(h.events.map((e) => `${e.type} ${e.key}`), ['start web:meet:Chrome'])
+  h.mic([])
+  h.wait(20_000)
+  assert.deepEqual(h.ends().map((e) => e.key), ['web:meet:Chrome'])
+})
+
+test('Windows: a browser on the mic with no meeting tab before any call is still an unknown call', () => {
+  const h = harness()
+  h.mic(['chrome.exe'], { 'chrome.exe': [{ url: '', title: 'Inbox - Gmail - Google Chrome' }] })
+  h.wait(20_000)
+  assert.equal(h.starts()[0]?.key, 'web:unknown:Chrome')
+})
+
 test('dictation and voice apps (Superwhisper, Wispr, Siri, Voice Memos, QuickTime) are never announced', () => {
   const h = harness()
   h.mic(['com.superduper.superwhisper', 'com.electron.wispr-flow', 'com.apple.siri.helper', 'com.apple.VoiceMemos', 'com.apple.QuickTimePlayerX', 'com.openai.chat'])

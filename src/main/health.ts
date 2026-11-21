@@ -6,7 +6,8 @@ import type { HealthItem, HealthReport, Permissions } from '@shared/types'
 import { audio } from './audio'
 import * as claude from './claude'
 import { engine } from './engine'
-import { googleState } from './googleCalendar'
+import { lookupBetween } from './calendar'
+import { googleReadable } from './googleCalendar'
 import { helper } from './helper'
 import { recorder } from './meetings/recorder'
 import { dataDir, enginePython, projectRoot } from './paths'
@@ -51,17 +52,23 @@ function engineFailure(text: string): { code: string; detail?: string } {
   return { code: 'failed', detail: last?.slice(0, 300) }
 }
 
+/** The tools Claude's skills rely on; the self-test fails when one is missing. */
+const MCP_TOOLS = ['list_meetings', 'get_transcript', 'list_upcoming_meetings', 'search_transcripts']
+
 /**
- * Starts the MCP server exactly as Claude does and asks it to introduce itself.
- * Resolves with an error text, or null when it answered.
+ * Starts the MCP server exactly as Claude does: introduces itself (initialize), lists its tools
+ * (the ones above must be there) and calls list_meetings once (so reading the library works too).
+ * Resolves with an error text, or null when all of it answered.
  */
 export function mcpSelfTest(timeoutMs = 45_000): Promise<string | null> {
   return new Promise((resolve) => {
     const python = enginePython()
     if (!existsSync(python)) return resolve('engine not installed')
-    const { command, args } = claude.mcpEntry()
-    const proc = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
-    let out = ''
+    const entry = claude.mcpEntry()
+    // UTF-8 everywhere, as in Claude's config (a Hebrew Windows user name breaks the default code page).
+    const env = { ...process.env, ...(entry.env ?? {}), PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' }
+    const proc = spawn(entry.command, entry.args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env })
+    let buf = ''
     let err = ''
     let done = false
     const finish = (result: string | null): void => {
@@ -71,30 +78,45 @@ export function mcpSelfTest(timeoutMs = 45_000): Promise<string | null> {
       proc.kill()
       resolve(result)
     }
+    const send = (msg: object): void => void proc.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n')
     const timer = setTimeout(() => finish(`no answer after ${Math.round(timeoutMs / 1000)} s`), timeoutMs)
+    const onMessage = (msg: { id?: number; result?: Record<string, unknown>; error?: { message?: string } }): void => {
+      if (msg.error && msg.id) return finish(`${['', 'initialize', 'tools/list', 'list_meetings'][msg.id] ?? 'request'}: ${String(msg.error.message ?? 'error')}`)
+      if (msg.id === 1 && msg.result?.serverInfo) {
+        send({ method: 'notifications/initialized' })
+        send({ id: 2, method: 'tools/list', params: {} })
+      } else if (msg.id === 2) {
+        const names = ((msg.result?.tools ?? []) as { name?: string }[]).map((t) => t.name)
+        const missing = MCP_TOOLS.filter((n) => !names.includes(n))
+        if (missing.length) return finish(`tools missing: ${missing.join(', ')}`)
+        send({ id: 3, method: 'tools/call', params: { name: 'list_meetings', arguments: { limit: 1 } } })
+      } else if (msg.id === 3) {
+        if (msg.result?.isError) return finish(`list_meetings failed: ${JSON.stringify(msg.result.content ?? '').slice(0, 200)}`)
+        finish(null)
+      }
+    }
     proc.stdout.on('data', (d) => {
-      out += String(d)
-      for (const line of out.split('\n')) {
+      buf += String(d)
+      let nl: number
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim()
+        buf = buf.slice(nl + 1)
+        if (!line) continue
         try {
-          const msg = JSON.parse(line)
-          if (msg.id === 1 && msg.result?.serverInfo) return finish(null)
-          if (msg.id === 1 && msg.error) return finish(String(msg.error.message ?? 'error'))
+          onMessage(JSON.parse(line))
         } catch {
-          /* a partial line */
+          /* not JSON (a log line) */
         }
       }
     })
     proc.stderr.on('data', (d) => (err = (err + String(d)).slice(-600)))
     proc.on('error', (e) => finish(e.message))
     proc.on('exit', (code) => finish(`exited (${code}): ${err.trim().split('\n').pop() ?? ''}`))
-    proc.stdin.write(
-      JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'klara-wisper-health-check', version: app.getVersion() } }
-      }) + '\n'
-    )
+    send({
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'klara-wisper-health-check', version: app.getVersion() } }
+    })
   })
 }
 
@@ -213,12 +235,19 @@ async function doRun(onUpdate?: (items: HealthItem[]) => void): Promise<HealthRe
 
   // 8. the calendar: the Mac's Calendar app, or Google Calendar through its secret link (never fatal)
   await check('calendar', async () => {
-    const google = googleState()
-    if (google.linked && google.lastError) return { status: 'warn', code: 'googleError', detail: google.lastError.replace(/^gcal:/, '') }
-    if (google.linked) return { status: 'ok', detail: google.calendar ?? 'Google Calendar' }
+    // Each source on its own: the Mac calendar (permission, and the helper really answering) and Google's
+    // link (really fetched when the copy in memory is old; a link the system can't decrypt warns).
     const macPerms = perms as Permissions | null
-    if (mac && macPerms?.calendar === 'granted') return { status: 'ok', detail: 'macOS Calendar' }
-    return { status: 'warn', code: 'notConnected' }
+    const now = new Date()
+    const lk = await lookupBetween(now, new Date(now.getTime() + 86_400_000)).catch(() => null)
+    const macOk = !!lk?.mac
+    const g = await googleReadable().catch(() => null)
+    const macText = !mac ? null : macOk ? 'Mac: ok' : `Mac: ${macPerms?.calendar ?? 'not readable'}`
+    const gText = !g?.linked ? 'Google: not linked' : g.ok ? `Google: ok${g.events != null ? ` (${g.events} events in feed)` : ''}${g.error ? `, last fetch ${g.error.replace(/^gcal:/, '')}` : ''}` : `Google: ${(g.error ?? 'not read').replace(/^gcal:/, '')}`
+    const detail = [macText, gText].filter(Boolean).join(' · ')
+    if (g?.linked && (!g.ok || g.needsRelink)) return { status: 'warn', code: 'googleError', detail }
+    if (macOk || g?.ok) return { status: 'ok', detail }
+    return { status: 'warn', code: 'notConnected', detail }
   })
 
   // 9. Claude: connected, and the connection really starts

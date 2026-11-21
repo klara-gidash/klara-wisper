@@ -2,7 +2,8 @@ import { existsSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { MeetingMeta } from '@shared/types'
 import { engine } from './engine'
-import { helper } from './helper'
+import { encodeRaw } from './meetings/finalize'
+import { settings } from './settings'
 import { db } from './storage/db'
 import { listMeetingFolders, readMeta, writeMeeting, writeMeta } from './storage/files'
 import { broadcast } from './windows'
@@ -51,10 +52,12 @@ async function recoverOne(folder: string, meta: MeetingMeta, streams: string[]):
     meta.endedAt = new Date(new Date(meta.startedAt).getTime() + seconds * 1000).toISOString()
     meta.status = 'done'
     writeMeeting(folder, meta, final.segments)
-    await helper.request('encode', { inputs: Object.values(rawPaths), output: join(folder, 'audio.m4a') }, 600_000)
-    rmSync(join(folder, '.raw'), { recursive: true, force: true })
-    meta.hasAudio = true
-    writeMeta(folder, meta)
+    // The transcript is saved; an encoding failure leaves .raw for the next launch (encodeLeftover).
+    const encoded = await encodeKept(folder, meta)
+    if (encoded !== null) {
+      meta.hasAudio = encoded
+      writeMeta(folder, meta)
+    }
     db().indexMeeting(meta, final.segments)
     broadcast('meetings:changed', meta.id)
   } catch (err) {
@@ -66,20 +69,33 @@ async function recoverOne(folder: string, meta: MeetingMeta, streams: string[]):
 
 /** A finished meeting whose audio was never encoded (e.g. the app quit right at the end). */
 async function encodeLeftover(folder: string, meta: MeetingMeta): Promise<void> {
-  const streams = meta.mode === 'meeting' ? ['mic', 'system'] : ['mic']
-  const raw = streams.map((s) => join(folder, '.raw', `${s}.pcm`))
+  if (!existsSync(join(folder, '.raw'))) return
   if (existsSync(join(folder, 'audio.m4a'))) {
-    if (existsSync(join(folder, '.raw'))) rmSync(join(folder, '.raw'), { recursive: true, force: true }) // already encoded
+    rmSync(join(folder, '.raw'), { recursive: true, force: true }) // already encoded
     return
   }
-  if (!raw.every((p) => existsSync(p) && statSync(p).size > 0)) return
-  try {
-    await helper.request('encode', { inputs: raw, output: join(folder, 'audio.m4a') }, 600_000)
-    rmSync(join(folder, '.raw'), { recursive: true, force: true })
+  if (!settings.value.keepAudio) {
+    rmSync(join(folder, '.raw'), { recursive: true, force: true }) // audio not kept: nothing to encode
+    return
+  }
+  if (await encodeKept(folder, meta)) {
     meta.hasAudio = true
     writeMeta(folder, meta)
     broadcast('meetings:changed', meta.id)
+  }
+}
+
+/**
+ * Encodes audio.m4a from whichever sides were recorded (unless audio isn't kept) and removes .raw.
+ * Whether audio.m4a was made; null (and .raw kept for another try) when encoding failed.
+ */
+async function encodeKept(folder: string, meta: MeetingMeta): Promise<boolean | null> {
+  try {
+    const made = settings.value.keepAudio && (await encodeRaw(folder, meta.mode))
+    rmSync(join(folder, '.raw'), { recursive: true, force: true })
+    return made
   } catch (err) {
-    console.error('leftover encode failed', folder, err)
+    console.error('encode failed', folder, err)
+    return null
   }
 }

@@ -51,6 +51,8 @@ export class CallController {
   private endedAt = new Map<string, number>()
 
   private d: CallDeps
+  /** An unidentified call in the same browser that stands for the recorded web call (tab switched). */
+  private alias: string | null = null
 
   constructor(deps: CallDeps) {
     this.d = deps // a plain field: Node runs this file directly in tests (no parameter properties)
@@ -68,6 +70,16 @@ export class CallController {
         // Started by hand: this call is the one being recorded.
         r.cancelAutoStop(`adopted ${cand.key}`)
         r.detectorKey = cand.key
+        detector.claim(cand.key)
+        return
+      }
+      if (cand.key.startsWith('web:unknown:') && isWebMeeting(r.detectorKey) && r.detectorKey.endsWith(`:${cand.appName}`)) {
+        // A meeting recognised by its window title (key web:<site>:<browser>, Windows only).
+        // Windows only sees the active tab's title: the user switched tabs, but the same browser still
+        // holds the mic, so it's the same call. Keep its recording instead of splitting it.
+        r.cancelAutoStop('the same browser still holds the microphone')
+        this.endedAt.delete(r.detectorKey)
+        this.alias = cand.key
         detector.claim(cand.key)
         return
       }
@@ -113,7 +125,14 @@ export class CallController {
     this.d.log(`call released the microphone: ${key}`)
     this.endedAt.set(key, this.d.now())
     const r = this.d.recorder
-    if (r.live && r.detectorKey === key) r.requestAutoStop('the call app released the microphone')
+    if (!r.live) return
+    if (r.detectorKey === key) r.requestAutoStop('the call app released the microphone')
+    else if (this.alias === key) {
+      this.alias = null
+      // The meeting's own tab came back (it starts again as the same call) or the browser let go.
+      this.endedAt.set(r.detectorKey ?? key, this.d.now())
+      r.requestAutoStop('the call app released the microphone')
+    }
   }
 
   private async begin(cand: Candidate): Promise<void> {
@@ -121,6 +140,7 @@ export class CallController {
       if (this.d.recorder.busyStopping) await this.d.recorder.idle()
       await this.d.recorder.start(cand)
       this.endedAt.delete(cand.key)
+      this.alias = null
       this.d.recording(cand)
     } catch (err) {
       this.d.log(`auto-record failed: ${(err as Error)?.message ?? err}`)

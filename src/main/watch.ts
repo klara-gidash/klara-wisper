@@ -18,8 +18,9 @@ const timers = new Map<string, NodeJS.Timeout>()
 export function watchLibrary(): void {
   watcher?.close()
   const root = meetingsRoot()
-  mkdirSync(root, { recursive: true })
   try {
+    // Documents denied (macOS) or Controlled Folder Access (Windows): keep starting, health shows 'storage'
+    mkdirSync(root, { recursive: true })
     watcher = watch(root, { recursive: true }, onChange)
     watcher.on('error', (err) => {
       console.warn('library watch stopped, retrying', String(err))
@@ -31,9 +32,16 @@ export function watchLibrary(): void {
   }
 }
 
+/** meta.json or summary.md anywhere under the library, either separator. */
+export function isWatchedFile(filename: string): boolean {
+  return /(^|\/)(meta\.json|summary\.md)$/.test(filename.replace(/\\/g, '/'))
+}
+
 function onChange(_event: string, filename: string | null): void {
   const root = meetingsRoot()
-  if (!filename || !/(^|\/)(meta\.json|summary\.md)$/.test(filename)) return
+  if (!filename) return
+  filename = filename.replace(/\\/g, '/') // Windows reports backslashes
+  if (!isWatchedFile(filename)) return
   const folder = dirname(join(root, filename))
   clearTimeout(timers.get(folder))
   timers.set(

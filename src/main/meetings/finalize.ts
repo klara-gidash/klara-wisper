@@ -1,8 +1,9 @@
 import { Notification } from 'electron'
-import { existsSync, rmSync, statSync } from 'node:fs'
+import { existsSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { MeetingMeta, RecordingMode, Segment, SpeakerInfo } from '@shared/types'
-import { matchEvent, matchVersion } from '../calendar'
+import { SOURCE_LABEL } from '@shared/types'
+import { matchEventChecked, matchVersion } from '../calendar'
 import { engine } from '../engine'
 import { helper } from '../helper'
 import { settings } from '../settings'
@@ -10,6 +11,7 @@ import { autoSummary } from '../summarize'
 import { db } from '../storage/db'
 import { readMeeting, renameMeetingFolder, writeMeeting, writeMeta } from '../storage/files'
 import { broadcast, showLibrary } from '../windows'
+import { isGenericTitle } from './titles'
 
 export interface FinalizeJob {
   meta: MeetingMeta
@@ -67,17 +69,21 @@ class Finalizer {
     speakers = applyRenames(speakers, job.renames)
 
     if (!meta.calendarEvent) {
-      const event = await matchEvent(new Date(meta.startedAt), meta).catch(() => null)
-      if (event) {
-        meta.calendarEvent = event
-        meta.attendees = event.attendees
-        if (meta.title === job.defaultTitle && meta.titleSource !== 'user') {
-          meta.title = event.title
-          meta.titleSource = 'calendar'
-        }
+      const r = await matchEventChecked(new Date(meta.startedAt), meta).catch(() => ({ event: null, readable: false }))
+      if (r.event) {
+        meta.calendarEvent = r.event
+        meta.attendees = r.event.attendees
       }
       // No event: an ad-hoc call or in person. The automatic summary names it (MCP set_meeting_details).
-      meta.calendarChecked = matchVersion()
+      // Stamp only when a calendar was readable; otherwise the backfill looks again later.
+      if (r.readable) meta.calendarChecked = matchVersion()
+    }
+    // A browser tab's or app's placeholder ("abc-defg-hij", "Zoom Meeting", "Google Meet 10:30")
+    // gives way to the calendar event's title; a name the user typed never does.
+    const ev = meta.calendarEvent
+    if (ev?.title && meta.titleSource !== 'user' && (meta.title === job.defaultTitle || isGenericTitle(meta.title, Object.values(SOURCE_LABEL)))) {
+      meta.title = ev.title
+      meta.titleSource = 'calendar'
     }
     meta.speakers = speakers
     meta.languages = [...new Set(segments.map((s) => s.lang))]
@@ -93,8 +99,9 @@ class Finalizer {
     try {
       if (speakersP) await this.addSpeakers(job, segments, speakersP)
     } finally {
-      // The raw recording is only needed until the audio file exists and the speaker step read it.
-      if (existsSync(join(meta.folder, 'audio.m4a'))) rmSync(join(meta.folder, '.raw'), { recursive: true, force: true })
+      // The raw recording is only needed until the audio file exists and the speaker step read it
+      // (or at all, when the user doesn't keep audio).
+      if (!settings.value.keepAudio || existsSync(join(meta.folder, 'audio.m4a'))) rmSync(join(meta.folder, '.raw'), { recursive: true, force: true })
     }
   }
 
@@ -127,21 +134,38 @@ function applyRenames(speakers: Record<string, SpeakerInfo>, renames: Record<str
   return out
 }
 
+/**
+ * Encodes a meeting's raw recordings into audio.m4a (channel 1 = me, channel 2 = the other side).
+ * Works with whichever side was recorded: a missing or empty side becomes a short silent file,
+ * which both helpers pad with silence to the other side's length, so the channels keep their
+ * meaning. False when there is no audio at all; throws when encoding fails (after one retry).
+ */
+export async function encodeRaw(folder: string, mode: RecordingMode): Promise<boolean> {
+  const streams = mode === 'meeting' ? ['mic', 'system'] : ['mic']
+  const paths = streams.map((s) => join(folder, '.raw', `${s}.pcm`))
+  const has = paths.map((p) => existsSync(p) && statSync(p).size > 0)
+  if (!has.some(Boolean)) return false
+  const inputs = paths.map((p, i) => {
+    if (has[i]) return p
+    const silent = join(folder, '.raw', `${streams[i]}.silent.pcm`)
+    writeFileSync(silent, Buffer.alloc(3200)) // 0.1 s of 16 kHz Int16 silence
+    return silent
+  })
+  const encode = (): Promise<unknown> => helper.request('encode', { inputs, output: join(folder, 'audio.m4a') }, 600_000)
+  await encode().catch(async (err) => {
+    console.error('encode failed, retrying', err)
+    await new Promise((r) => setTimeout(r, 1500))
+    return encode()
+  })
+  return true
+}
+
 async function encodeAudio(meta: MeetingMeta, mode: RecordingMode): Promise<void> {
-  const raw = (mode === 'meeting' ? ['mic', 'system'] : ['mic']).map((s) => join(meta.folder, '.raw', `${s}.pcm`))
-  if (!raw.every((p) => existsSync(p) && statSync(p).size > 0)) return
+  // Audio not kept: don't encode at all (the raw files are deleted after the speaker step).
+  if (!settings.value.keepAudio) return
   try {
-    const encode = (): Promise<unknown> => helper.request('encode', { inputs: raw, output: join(meta.folder, 'audio.m4a') }, 600_000)
-    await encode().catch(async (err) => {
-      console.error('encode failed, retrying', err)
-      await new Promise((r) => setTimeout(r, 1500))
-      return encode()
-    })
+    if (!(await encodeRaw(meta.folder, mode))) return
     meta.hasAudio = true
-    if (!settings.value.keepAudio) {
-      rmSync(join(meta.folder, 'audio.m4a'), { force: true })
-      meta.hasAudio = false
-    }
     writeMeta(meta.folder, meta)
   } catch (err) {
     console.error('encode failed', err)

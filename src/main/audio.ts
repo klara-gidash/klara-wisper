@@ -4,6 +4,10 @@ import { helper } from './helper'
 import { settings } from './settings'
 import { broadcast } from './windows'
 
+/** End-to-end tests (KLARA_E2E=1) feed a virtual cable as the microphone, so virtual inputs count as real. */
+const E2E = process.env.KLARA_E2E === '1'
+const usable = (d: MicDevice): boolean => E2E || !d.virtual
+
 /**
  * Audio plumbing between the helper and the recorders.
  * - The microphone is shared: dictation and a meeting can use it at the same time.
@@ -20,6 +24,8 @@ class Audio extends EventEmitter {
   levels: Levels = {}
   private appMics: string[] = []
   private levelTimer: NodeJS.Timeout | null = null
+  /** The microphone in use disappeared (unplugged, driver reset): reopen it if it comes back. */
+  private currentLost = false
 
   constructor() {
     super()
@@ -29,6 +35,24 @@ class Audio extends EventEmitter {
       this.scheduleLevels()
     })
     helper.on('devices', (snap) => this.applyDevices(snap))
+    helper.on('restarted', () => void this.reopenAfterRestart())
+  }
+
+  /** The helper crashed and came back: its microphone capture is gone. Reopen the same one. */
+  private async reopenAfterRestart(): Promise<void> {
+    if (this.micUsers.size === 0) return
+    const before = this.current?.uid ?? null
+    try {
+      await this.refreshDevices().catch(() => undefined)
+      const uid = before && this.devices.some((d) => d.uid === before) ? before : this.pick(this.appMics)
+      const r = await helper.request('startMic', { uid }, 120_000)
+      this.current = this.devices.find((d) => d.uid === r.device?.uid) ?? this.current
+      this.currentLost = false
+      console.log(`mic reopened after a helper restart: "${this.current?.name}"`)
+      this.emit('devices')
+    } catch (err) {
+      console.error('mic reopen after helper restart failed:', String((err as Error)?.message ?? err))
+    }
   }
 
   private scheduleLevels(): void {
@@ -56,16 +80,21 @@ class Audio extends EventEmitter {
    * if the one in use disappeared or the system default changed (automatic mode only).
    */
   private async followDevice(previousDefault: string | null): Promise<void> {
-    if (settings.value.micUid && this.devices.some((d) => d.uid === settings.value.micUid)) return
     const current = this.current?.uid ?? null
     const gone = !!current && !this.devices.some((d) => d.uid === current)
-    if (!gone && previousDefault === this.defaultUid) return
+    if (gone) this.currentLost = true
+    // The only microphone went away and came back with the same uid: the capture on it is dead,
+    // reopen it even though it's the one we'd pick anyway.
+    const returned = this.currentLost && !gone && !!current
+    if (!returned && settings.value.micUid && this.devices.some((d) => d.uid === settings.value.micUid)) return
+    if (!gone && !returned && previousDefault === this.defaultUid) return
     const want = this.pick(this.appMics)
-    if (!want || want === current) return
+    if (!want || (want === current && !returned)) return
     try {
       const r = await helper.request('startMic', { uid: want }, 120_000)
       this.current = this.devices.find((d) => d.uid === r.device?.uid) ?? this.current
-      console.log(`mic switched to "${this.current?.name}" (device change)`)
+      this.currentLost = false
+      console.log(`mic ${returned && want === current ? 'reopened' : 'switched to'} "${this.current?.name}" (device change)`)
       this.emit('devices')
     } catch (err) {
       console.error('mic switch failed:', String((err as Error)?.message ?? err))
@@ -78,7 +107,7 @@ class Audio extends EventEmitter {
 
   /** Which microphone to open. `appMics`: inputs the call app itself is using. */
   pick(appMics: string[] = []): string | null {
-    const present = (uid: string | null): boolean => !!uid && this.devices.some((d) => d.uid === uid && !d.virtual)
+    const present = (uid: string | null): boolean => !!uid && this.devices.some((d) => d.uid === uid && usable(d))
     if (present(settings.value.micUid)) return settings.value.micUid
     const fromApp = appMics.find((u) => present(u))
     if (fromApp) return fromApp
@@ -92,7 +121,7 @@ class Audio extends EventEmitter {
    * recording follows it. Automatic mode only: a microphone chosen in Settings always wins.
    */
   updateAppMics(uids: string[]): void {
-    const fresh = uids.filter((u) => this.devices.some((d) => d.uid === u && !d.virtual))
+    const fresh = uids.filter((u) => this.devices.some((d) => d.uid === u && usable(d)))
     if (!fresh.length || fresh.join() === this.appMics.join()) return
     this.appMics = fresh
     if (!this.micUsers.has('meeting') || settings.value.micUid) return
@@ -112,7 +141,7 @@ class Audio extends EventEmitter {
     const first = this.micUsers.size === 0
     // No hint from the call app (Windows, an unknown app) and several real microphones: listen to
     // all of them for a moment before the call opens one (once; the winner is remembered).
-    const real = this.devices.filter((d) => !d.virtual)
+    const real = this.devices.filter(usable)
     if (first && user === 'meeting' && !appMics.length && !settings.value.micUid && !this.scanWinner && real.length >= 2) {
       await this.scan(2000).catch(() => undefined)
       if (this.scanWinner) settings.update({ lastScanMic: this.scanWinner })
@@ -126,6 +155,7 @@ class Audio extends EventEmitter {
       this.micUsers.delete(user)
       throw err
     })
+    this.currentLost = false
     this.current = this.devices.find((d) => d.uid === r.device?.uid) ?? {
       uid: r.device?.uid, name: r.device?.name, transport: r.device?.transport, virtual: false, isDefault: false
     }
@@ -136,6 +166,7 @@ class Audio extends EventEmitter {
   async releaseMic(user: string): Promise<void> {
     if (!this.micUsers.delete(user) || this.micUsers.size > 0) return
     this.current = null
+    this.currentLost = false
     this.appMics = []
     this.levels.mic = undefined
     await helper.request('stopMic').catch(() => undefined)

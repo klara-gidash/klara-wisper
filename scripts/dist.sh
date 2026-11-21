@@ -18,6 +18,23 @@ if security find-certificate -c "Klara Wisper Local" >/dev/null 2>&1; then
     --entitlements resources/entitlements.mac.plist --sign "Klara Wisper Local" "$APP"
   codesign --verify --deep --strict "$APP"
 fi
+# A running copy is quit the normal way first (a recording in progress is saved; the app turns
+# SIGTERM into the same quit), waiting up to 120 s for it to finish.
+MAIN_BIN="/Applications/Klara Wisper.app/Contents/MacOS/Klara Wisper"
+if pgrep -f "$MAIN_BIN" >/dev/null 2>&1; then
+  echo "Klara Wisper is running: asking it to quit (a recording in progress is saved)..."
+  osascript -e 'tell application "Klara Wisper" to quit' >/dev/null 2>&1 || pkill -TERM -f "$MAIN_BIN" || true
+  for i in $(seq 1 120); do
+    pgrep -f "$MAIN_BIN" >/dev/null 2>&1 || break
+    [ "$i" = 30 ] && pkill -TERM -f "$MAIN_BIN" 2>/dev/null || true
+    sleep 1
+  done
+  if pgrep -f "$MAIN_BIN" >/dev/null 2>&1; then
+    echo "Klara Wisper did not quit within 120 s; quit it yourself and run this again." >&2
+    exit 1
+  fi
+  echo "Klara Wisper quit."
+fi
 rm -rf "/Applications/Klara Wisper.app"
 cp -R "$APP" /Applications/
 # Only the copy in /Applications should exist for macOS: build copies share its identity and

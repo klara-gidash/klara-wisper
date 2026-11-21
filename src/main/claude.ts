@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { ClaudeAuto } from '@shared/types'
 import { enginePython, projectRoot } from './paths'
@@ -26,9 +26,9 @@ function storeConfigs(): string[] {
     const packages = join(localAppData, 'Packages')
     return readdirSync(packages)
       .filter((d) => /^(AnthropicPBC\.)?Claude_/i.test(d))
-      .map((d) => join(packages, d, 'LocalCache', 'Roaming', 'Claude'))
-      .filter((d) => existsSync(dirname(d)))
-      .map((d) => join(d, CONFIG_FILE))
+      // The package folder is enough: LocalCache\Roaming appears only once Claude has run, and
+      // writeDesktop creates it (mkdir -p) when it writes the config.
+      .map((d) => join(packages, d, 'LocalCache', 'Roaming', 'Claude', CONFIG_FILE))
   } catch {
     return []
   }
@@ -52,8 +52,9 @@ export function desktopInstalled(): boolean {
  * In an installed app that is <data folder>/engine (set up on first launch), so the entry keeps
  * working when the app is moved or updated.
  */
-export function mcpEntry(): { command: string; args: string[] } {
-  return { command: enginePython(), args: ['-m', 'klara_engine.mcp_server'] }
+export function mcpEntry(): { command: string; args: string[]; env: Record<string, string> } {
+  // UTF-8 I/O: on Windows with a Hebrew user name Python's default code page can't encode the paths.
+  return { command: enginePython(), args: ['-m', 'klara_engine.mcp_server'], env: { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } }
 }
 
 /** Parsed config, `{}` if there is none yet (or it is empty); throws if the file isn't valid JSON. */
@@ -63,13 +64,44 @@ function readDesktop(file = desktopConfig): any {
   return text.trim() ? JSON.parse(text) : {}
 }
 
+/** Folders under nvm (mac: ~/.nvm/versions/node/<v>/bin; Windows: %NVM_HOME%\<v> or %APPDATA%\nvm\<v>), newest first. */
+function nvmDirs(): string[] {
+  const roots = win
+    ? [process.env.NVM_HOME, join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'nvm')]
+    : [join(process.env.NVM_DIR || join(homedir(), '.nvm'), 'versions', 'node')]
+  const out: string[] = []
+  for (const root of roots) {
+    if (!root) continue
+    try {
+      for (const v of readdirSync(root).filter((d) => /^v?\d/.test(d)).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))) {
+        out.push(win ? join(root, v) : join(root, v, 'bin'))
+      }
+    } catch {
+      /* no nvm */
+    }
+  }
+  return out
+}
+
 export function claudeCli(): string | null {
-  const candidates = [
-    join(homedir(), '.local', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude'),
-    join(homedir(), '.claude', 'local', 'claude'),
-    '/usr/local/bin/claude',
-    '/opt/homebrew/bin/claude'
-  ]
+  const appData = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')
+  const npmWin = join(appData, 'npm')
+  const candidates = win
+    ? [
+        join(homedir(), '.local', 'bin', 'claude.exe'),
+        // npm i -g @anthropic-ai/claude-code: the native binary when the package ships one, else the shim.
+        join(npmWin, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe'),
+        join(npmWin, 'claude.cmd'),
+        ...nvmDirs().map((d) => join(d, 'claude.cmd'))
+      ]
+    : [
+        join(homedir(), '.local', 'bin', 'claude'),
+        join(homedir(), '.claude', 'local', 'claude'),
+        '/usr/local/bin/claude',
+        '/opt/homebrew/bin/claude',
+        join(homedir(), '.npm-global', 'bin', 'claude'),
+        ...nvmDirs().map((d) => join(d, 'claude'))
+      ]
   const found = candidates.find((p) => existsSync(p))
   if (found || process.platform !== 'darwin') return found ?? null
   // Claude Desktop ships its own copy of Claude Code: <support>/Claude/claude-code/<version>/<build>/claude.app
@@ -87,9 +119,45 @@ export function claudeCli(): string | null {
   return null
 }
 
+/**
+ * The environment for running the CLI: an app started from the Dock/Start menu has a minimal PATH,
+ * and an npm-installed `claude` is a script that needs `node` (next to it for nvm, else the usual
+ * places), so those folders go first.
+ */
+export function cliEnv(cli = claudeCli()): NodeJS.ProcessEnv {
+  const extra = [
+    cli ? dirname(cli) : null,
+    ...(win
+      ? [join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs'), join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'npm')]
+      : ['/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.npm-global', 'bin'), join(homedir(), '.local', 'bin')]),
+    ...nvmDirs().slice(0, 1)
+  ].filter((d): d is string => !!d && existsSync(d))
+  const key = win ? Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH') ?? 'Path' : 'PATH'
+  return { ...process.env, [key]: [...new Set([...extra, ...(process.env[key] ?? '').split(delimiter).filter(Boolean)])].join(delimiter) }
+}
+
+/**
+ * How to start the CLI with these arguments. A Windows npm shim (claude.cmd) can't be spawned without
+ * a shell (and a shell would mangle the JSON argument of `mcp add-json`), so it runs as node + cli.js.
+ */
+export function cliCommand(cli: string, args: string[]): { command: string; args: string[] } {
+  if (win && /\.cmd$/i.test(cli)) {
+    const script = join(dirname(cli), 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js')
+    const node = [join(dirname(cli), 'node.exe'), join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs', 'node.exe')].find((p) => existsSync(p))
+    if (node && existsSync(script)) return { command: node, args: [script, ...args] }
+  }
+  return { command: cli, args }
+}
+
+/** Runs the CLI (PATH with node, no console window on Windows). */
+export function runCli(cli: string, args: string[], opts: { timeout: number; cwd?: string }): Promise<{ stdout: string; stderr: string }> {
+  const c = cliCommand(cli, args)
+  return run(c.command, c.args, { ...opts, env: cliEnv(cli), windowsHide: true })
+}
+
 const sameEntry = (a: any): boolean => {
   const want = mcpEntry()
-  return a?.command === want.command && JSON.stringify(a?.args) === JSON.stringify(want.args) && !a?.env
+  return a?.command === want.command && JSON.stringify(a?.args) === JSON.stringify(want.args) && JSON.stringify(a?.env ?? null) === JSON.stringify(want.env)
 }
 
 export async function status(): Promise<{ desktop: boolean; desktopInstalled: boolean; code: boolean; codeCli: boolean; snippet: string }> {
@@ -105,7 +173,7 @@ export async function status(): Promise<{ desktop: boolean; desktopInstalled: bo
   let code = false
   if (cli) {
     try {
-      const { stdout } = await run(cli, ['mcp', 'get', SERVER_NAME], { timeout: 8000 })
+      const { stdout } = await runCli(cli, ['mcp', 'get', SERVER_NAME], { timeout: 8000 })
       code = stdout.includes('klara_engine.mcp_server')
     } catch {
       code = false
@@ -266,7 +334,7 @@ export async function disconnect(): Promise<void> {
     }
   }
   const cli = claudeCli()
-  if (cli) await run(cli, ['mcp', 'remove', SERVER_NAME, '--scope', 'user'], { timeout: 8000, windowsHide: true }).catch(() => undefined)
+  if (cli) await runCli(cli, ['mcp', 'remove', SERVER_NAME, '--scope', 'user'], { timeout: 8000 }).catch(() => undefined)
   const dest = join(homedir(), '.claude', 'skills')
   try {
     for (const name of readdirSync(dest)) {
@@ -281,7 +349,7 @@ export async function disconnect(): Promise<void> {
 export async function signedIn(cli = claudeCli()): Promise<boolean> {
   if (!cli) return false
   try {
-    const { stdout } = await run(cli, ['auth', 'status', '--json'], { timeout: 10_000, cwd: homedir() })
+    const { stdout } = await runCli(cli, ['auth', 'status', '--json'], { timeout: 10_000, cwd: homedir() })
     return JSON.parse(stdout)?.loggedIn === true
   } catch {
     return false
@@ -352,6 +420,6 @@ export function installSkills(): string[] {
 export async function connectCode(): Promise<void> {
   const cli = claudeCli()
   if (!cli) throw new Error('Claude Code CLI not found')
-  await run(cli, ['mcp', 'remove', SERVER_NAME, '--scope', 'user'], { timeout: 8000 }).catch(() => undefined)
-  await run(cli, ['mcp', 'add-json', SERVER_NAME, JSON.stringify({ type: 'stdio', ...mcpEntry() }), '--scope', 'user'], { timeout: 15000 })
+  await runCli(cli, ['mcp', 'remove', SERVER_NAME, '--scope', 'user'], { timeout: 8000 }).catch(() => undefined)
+  await runCli(cli, ['mcp', 'add-json', SERVER_NAME, JSON.stringify({ type: 'stdio', ...mcpEntry() }), '--scope', 'user'], { timeout: 15000 })
 }

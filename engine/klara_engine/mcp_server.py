@@ -180,8 +180,23 @@ def segments(meta: dict) -> list[dict]:
     return sorted(t.get("segments", []), key=lambda s: s.get("start", 0))
 
 
+def parse_dt(iso: str) -> datetime | None:
+    """An ISO date-time ("...Z", "+02:00" or naive = local) as an aware datetime, or None."""
+    try:
+        d = datetime.fromisoformat((iso or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.astimezone()
+
+
+def local_day(iso: str) -> str:
+    """The local calendar date (YYYY-MM-DD) of a timestamp; stored times are UTC, the user thinks local."""
+    d = parse_dt(iso)
+    return d.astimezone().strftime("%Y-%m-%d") if d else (iso or "")[:10]
+
+
 def in_range(iso: str, start: str | None, end: str | None) -> bool:
-    day = iso[:10]
+    day = local_day(iso)
     return (not start or day >= start[:10]) and (not end or day <= end[:10])
 
 
@@ -370,13 +385,21 @@ def list_upcoming_meetings() -> str:
     cache = read_json(DATA_DIR / "upcoming.json")
     if not cache:
         return "No calendar data yet (open Klara Wisper and allow calendar access)."
-    now = datetime.now().astimezone().isoformat()
-    rows = [e for e in cache.get("events", []) if e.get("end", "") > now]
-    return "\n".join(
+    # Compare real instants: the cache holds UTC ("...Z") and a string compare against local "+02:00"
+    # dropped meetings ending in the next few hours.
+    now = datetime.now().astimezone()
+    rows = [e for e in cache.get("events", []) if (end := parse_dt(e.get("end", ""))) and end > now]
+    stale = ""
+    stamp = cache.get("at") or ""
+    updated = parse_dt(stamp)
+    if updated and (age := (now - updated).total_seconds()) > 15 * 60:
+        mins = int(age // 60)
+        stale = f"(Calendar last read {mins // 60} h {mins % 60} min ago, at {when(stamp)}; it may be out of date.)\n"
+    return stale + ("\n".join(
         f"- {one_line(e.get('title'))} — {when(e.get('start', ''))}"
         + (f" · {', '.join(one_line(a.get('name') or a.get('email'), 60) for a in e.get('attendees', []))}" if e.get("attendees") else "")
         for e in rows
-    ) or "No upcoming meetings."
+    ) or "No upcoming meetings.")
 
 
 @server.tool(title="Save meeting notes", annotations=ToolAnnotations(destructiveHint=True, idempotentHint=True))

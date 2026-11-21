@@ -7,21 +7,31 @@ import { invoke } from '../lib/api'
 
 const GOOGLE_SETTINGS = 'https://calendar.google.com/calendar/r/settings'
 
+/** The main process adds `needsRelink` when the saved link can no longer be decrypted (src/main/googleCalendar.ts). */
+type State = GoogleCalendarState & { needsRelink?: boolean }
+
+// Defaults for the "paste the link again" message; a `gcal.err.needsRelink` key in lib/strings.ts takes precedence.
+const NEEDS_RELINK: Record<string, string> = {
+  he: 'Klara Wisper כבר לא מצליחה לקרוא את הקישור השמור ל-Google Calendar (macOS או Windows לא אישרו לפתוח אותו, למשל אחרי עדכון). היומן של Google כבוי עד שמדביקים את הקישור שוב.',
+  en: 'Klara Wisper can no longer read the saved Google Calendar link (the system refused to unlock it, e.g. after an update). Google Calendar is off until you paste the link again.'
+}
+
 /** Google Calendar through its secret iCal link: paste once, the app keeps it encrypted (src/main/googleCalendar.ts). */
 export function GoogleCalendarSection({ onChange }: { onChange?: (s: GoogleCalendarState | null) => void } = {}) {
   const { t, i18n } = useTranslation()
-  const [st, setSt] = useState<GoogleCalendarState | null>(null)
+  const [st, setSt] = useState<State | null>(null)
   const [link, setLink] = useState('')
   const [editing, setEditing] = useState(false)
   const [msg, setMsg] = useState<{ text: string; error: boolean } | null>(null)
   const [working, setWorking] = useState(false)
-  useEffect(() => void invoke<GoogleCalendarState>('gcal:state').then(setSt, () => setSt(null)), [])
+  useEffect(() => void invoke<State>('gcal:state').then(setSt, () => setSt(null)), [])
   useEffect(() => onChange?.(st), [st])
 
   // Main-process errors arrive as "Error invoking remote method 'gcal:connect': Error: gcal:notFound".
   const explain = (raw: unknown): string => {
     const text = String((raw as Error)?.message ?? raw)
     const code = [...text.matchAll(/gcal:(\w+)/g)].at(-1)?.[1] // the last one: the first is the channel name
+    if (code === 'needsRelink') return t('gcal.err.needsRelink', { defaultValue: NEEDS_RELINK[i18n.language] ?? NEEDS_RELINK.en })
     return code ? t(`gcal.err.${code}`, { defaultValue: text }) : text.replace(/^Error: (Error invoking remote method '[^']+': )?(Error: )?/, '')
   }
 
@@ -29,7 +39,7 @@ export function GoogleCalendarSection({ onChange }: { onChange?: (s: GoogleCalen
     setWorking(true)
     setMsg(null)
     try {
-      const s = await invoke<GoogleCalendarState>('gcal:connect', link)
+      const s = await invoke<State>('gcal:connect', link)
       setSt(s)
       setLink('')
       setEditing(false)
@@ -43,7 +53,7 @@ export function GoogleCalendarSection({ onChange }: { onChange?: (s: GoogleCalen
   const disconnect = async (): Promise<void> => {
     setWorking(true)
     try {
-      setSt(await invoke<GoogleCalendarState>('gcal:disconnect'))
+      setSt(await invoke<State>('gcal:disconnect'))
       setEditing(false)
       setMsg({ text: t('gcal.disconnected'), error: false })
     } finally {
@@ -52,14 +62,14 @@ export function GoogleCalendarSection({ onChange }: { onChange?: (s: GoogleCalen
   }
 
   if (!st) return null
-  const showInput = !st.linked || editing || !!st.lastError
+  const showInput = !st.linked || editing || !!st.lastError || !!st.needsRelink
   const status = msg ?? (st.lastError ? { text: explain(st.lastError), error: true } : null)
 
   return (
     <div className="flex flex-col gap-3 px-4 py-3.5">
       <div className="text-[12.5px] leading-relaxed text-ink-2">{t('gcal.hint')}</div>
 
-      {st.linked && (
+      {st.linked && !st.needsRelink && (
         <div className="flex items-center gap-2 rounded-[10px] bg-panel-2 px-3 py-2">
           <CalendarCheck size={14} className="shrink-0 text-ok" />
           <span className="text-[12px] text-ink-2">{t('gcal.linkedTo')}:</span>

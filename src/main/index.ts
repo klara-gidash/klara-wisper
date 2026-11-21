@@ -20,6 +20,7 @@ import { recoverInterrupted } from './recovery'
 import { isAppUrl, safeExternal } from './security'
 import { settings } from './settings'
 import { setup } from './setup'
+import { resumeSetupAtLaunch } from '@shared/plan'
 import { autoSummary } from './summarize'
 import { db } from './storage/db'
 import { createTray } from './tray'
@@ -29,6 +30,8 @@ import { watchLibrary } from './watch'
 import { broadcast, pillWindow, showLibrary } from './windows'
 
 app.setName('Klara Wisper')
+// Windows: toasts ("click to record") need the same AppUserModelID as the installer's shortcut.
+if (process.platform === 'win32') app.setAppUserModelId('io.klara.wisper') // appId in electron-builder.config.cjs
 // Chromium's own files (cache, local storage, crash reports) go to the same folder as everything else.
 app.setPath('userData', dataDir)
 mkdirSync(dataDir, { recursive: true, mode: 0o700 })
@@ -276,7 +279,8 @@ app.whenReady().then(async () => {
     pushState()
     if (s.phase === 'done') restartEngineWhenIdle() // never in the middle of a call
   })
-  if (setup.refresh().needed && settings.value.onboarded) void setup.run()
+  // Also when the app was quit mid-install (a plan was chosen, the wizard not finished): the downloads resume.
+  if (setup.refresh().needed && resumeSetupAtLaunch(settings.value)) void setup.run()
 
   // "--health-check" (the CI smoke tests): once everything is installed, run the health check and
   // write <data folder>/health.json, the same as the wizard's last step.

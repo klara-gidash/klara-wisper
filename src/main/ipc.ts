@@ -6,7 +6,7 @@ import { recommend, type Use, type Wishes } from '@shared/plan'
 import { toMarkdown } from '@shared/transcript'
 import { audio } from './audio'
 import { matchPastMeetings } from './backfill'
-import { eventsBetween, requestCalendar, upcoming } from './calendar'
+import { lookupBetween, requestCalendar, shownCalendars, startUpcomingRefresh, upcoming, writeUpcomingCache } from './calendar'
 import { connectGoogle, disconnectGoogle, googleLinked, googleState } from './googleCalendar'
 import * as claude from './claude'
 import { engine } from './engine'
@@ -42,12 +42,8 @@ function cleanWishes(raw: unknown): Wishes {
 }
 
 /** The Claude connection (MCP) reads upcoming events from this file instead of touching the calendar. */
-export function cacheUpcoming(events: CalendarEvent[]): void {
-  try {
-    writeFileSync(join(dataDir, 'upcoming.json'), JSON.stringify({ at: new Date().toISOString(), events }))
-  } catch {
-    /* not critical */
-  }
+export function cacheUpcoming(events: CalendarEvent[], readable = true): void {
+  writeUpcomingCache(events, readable) // never replaces a non-empty cache with an unreadable empty list
 }
 
 const EDITABLE: (keyof Settings)[] = [
@@ -347,11 +343,10 @@ export function registerIpc(detector: Detector): void {
   handle('library:show', (route?: string) => void showLibrary(route))
 
   // Calendar, microphones, permissions
-  handle('calendar:upcoming', async () => {
-    const events = await upcoming()
-    cacheUpcoming(events)
-    return events
-  })
+  // upcoming.json is also refreshed from the main process (at start, then every 5 minutes), whether or
+  // not a window is open; started here because registerIpc runs once at startup.
+  startUpcomingRefresh()
+  handle('calendar:upcoming', async () => upcoming())
   // The home screen's "coming up": whole days, from today (offset 0) or later pages.
   handle('calendar:days', async (offsetDays = 0, days = 7) => {
     const from = new Date()
@@ -362,14 +357,14 @@ export function registerIpc(detector: Detector): void {
     const to = new Date(from)
     to.setHours(0, 0, 0, 0)
     to.setDate(to.getDate() + Math.max(1, Math.min(Number(days) || 7, 31)))
-    const all = (await eventsBetween(from, to)).filter((e) => new Date(e.end).getTime() > Date.now())
-    // Shared calendars (team coverage, a partner's…) would crowd the list: by default show only the
-    // account's own calendars, which macOS names after the email address.
+    const r = await lookupBetween(from, to)
+    const all = r.events.filter((e) => new Date(e.end).getTime() > Date.now())
+    // Shared calendars (team coverage, a partner's…) would crowd the list: by default show the account's
+    // own calendars plus the Google link's (see shownCalendars).
     const names = [...new Set(all.map((e) => e.calendar))]
-    const own = names.filter((n) => n.includes('@'))
-    const shown = new Set(settings.value.calendars ?? (own.length ? own : names))
+    const shown = shownCalendars(names)
     const events = all.filter((e) => shown.has(e.calendar))
-    if (!offsetDays) cacheUpcoming(events) // what Claude's list_upcoming_meetings reads
+    if (!offsetDays) cacheUpcoming(events, r.readable) // what Claude's list_upcoming_meetings reads
     const calendars = names.map((name) => ({ name, color: all.find((e) => e.calendar === name)?.color ?? null, shown: shown.has(name) }))
     return { events, calendars, google: googleLinked() }
   })

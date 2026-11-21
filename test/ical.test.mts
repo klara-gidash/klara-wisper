@@ -2,7 +2,7 @@
 // Run with `node --test test/ical.test.mts` (Node runs the TypeScript directly; no Electron).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cleanGoogleLink, eventsInRange, googleCalendarId, mergeEvents, parseIcs } from '../src/shared/ical.ts'
+import { cleanGoogleLink, decodeIcs, eventsInRange, googleCalendarId, mergeEvents, parseIcs } from '../src/shared/ical.ts'
 
 // Shaped like a real Google export: CRLF lines, folded lines, escapes, a VTIMEZONE, a VALARM.
 const FEED = [
@@ -211,4 +211,18 @@ test('only Google Calendar iCal links are accepted', () => {
   assert.throws(() => cleanGoogleLink(secret.replace('calendar.google.com', 'calendar.google.com.evil.example')), /gcal:badLink/)
   assert.throws(() => cleanGoogleLink(secret.replace('https:', 'http:')), /gcal:badLink/)
   assert.throws(() => cleanGoogleLink('not a link'), /gcal:badLink/)
+})
+
+test('a fold that splits a Hebrew letter in the middle of its bytes is unfolded before decoding', () => {
+  const title = 'פגישת צוות שבועית'
+  const head = new TextEncoder().encode('BEGIN:VCALENDAR\r\nX-WR-CALNAME:k@example.com\r\nBEGIN:VEVENT\r\nUID:he1\r\nDTSTART:20261122T080000Z\r\nDTEND:20261122T090000Z\r\nSUMMARY:')
+  const t = new TextEncoder().encode(title)
+  const tail = new TextEncoder().encode('\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n')
+  // Fold after the first byte of the third letter (each Hebrew letter is 2 bytes).
+  const fold = new TextEncoder().encode('\r\n ')
+  const bytes = new Uint8Array([...head, ...t.subarray(0, 5), ...fold, ...t.subarray(5), ...tail])
+  assert.ok(decodeIcs(bytes).includes(`SUMMARY:${title}`))
+  const cal = parseIcs(bytes)
+  assert.equal(cal.events.length, 1)
+  assert.equal(eventsInRange(cal, new Date('2026-11-22T00:00:00Z'), new Date('2026-11-23T00:00:00Z'))[0].title, title)
 })

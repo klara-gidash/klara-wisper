@@ -1,6 +1,6 @@
 ---
 name: klara-meeting-prep
-description: Before a meeting - prepares a short Hebrew brief for the user's next meeting (or a named one) from the Mac calendar and earlier calls recorded by Klara Wisper - who is coming, context and history, open tasks and promises from last time, a suggested agenda and questions. Read-only, never saves anything. Use when the user says "הכן אותי לפגישה", "הכנה לפגישה", "מה צריך לדעת לפני הפגישה עם X", "מה הפגישה הבאה שלי", "על מה דיברנו בפעם הקודמת עם X", "תדריך לפני הפגישה", "prep me for my next meeting", "brief me before my call with X", "what should I know before meeting X". Needs the Klara Wisper connector (MCP server "klara-wisper").
+description: Before a meeting - prepares a short Hebrew brief for the user's next meeting (or a named one) from the calendar (Mac or Google) and earlier calls recorded by Klara Wisper - who is coming, context and history, open tasks and promises from last time, a suggested agenda and questions. Read-only, never saves anything. Use when the user says "הכן אותי לפגישה", "הכנה לפגישה", "מה צריך לדעת לפני הפגישה עם X", "מה הפגישה הבאה שלי", "על מה דיברנו בפעם הקודמת עם X", "תדריך לפני הפגישה", "prep me for my next meeting", "brief me before my call with X", "what should I know before meeting X". Needs the Klara Wisper connector (MCP server "klara-wisper").
 ---
 
 # הכנה לפגישה

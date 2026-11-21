@@ -221,3 +221,40 @@ export function classifyFailure(message: string): FailureKind {
   if (/access is denied|permission denied|eperm|eacces|os error 5\b|os error 32\b|used by another process|operation not permitted|blocked by|virus/.test(s)) return 'blocked'
   return 'unknown'
 }
+
+/** A file error worth trying again after a moment (Windows: a file still open, an antivirus scan). */
+export function retryableFsError(err: unknown): boolean {
+  const code = (err as { code?: string } | null)?.code
+  return code === 'EBUSY' || code === 'EPERM' || code === 'ENOTEMPTY'
+}
+
+/** Engine files whose change means the copy next to the virtualenv must be refreshed (path relative to the engine folder). */
+export function isEngineCodeFile(rel: string): boolean {
+  const p = rel.replace(/\\/g, '/')
+  return p.endsWith('.py') && !p.split('/').includes('__pycache__')
+}
+
+/** The engine's stderr minus the noise (warnings, download redirects), line by line: tracebacks stay. */
+export function engineErrorLines(chunk: string): string {
+  return chunk
+    .split(/\r?\n/)
+    .filter((l) => l.trim() && !/Warning|warn\(|redirects|Loading weights/i.test(l))
+    .join('\n')
+}
+
+/**
+ * What the health check's main button does: 'repair' rebuilds the engine (only when the engine itself
+ * is broken), 'retry' re-runs the install (a model download failed, transcription was slow: the working
+ * engine stays), null when there is nothing to fix automatically.
+ */
+export function healthFix(items: { id: string; status: string; code?: string }[] | null | undefined): 'repair' | 'retry' | null {
+  const failed = (items ?? []).filter((i) => i.status === 'fail')
+  if (failed.some((i) => i.id === 'engine' || i.id === 'speakers' || (i.id === 'claude' && i.code === 'serverFailed'))) return 'repair'
+  if (failed.some((i) => i.id === 'models' || i.id === 'transcribe')) return 'retry'
+  return null
+}
+
+/** The install should carry on at launch: after the wizard, or once a plan was chosen (the app was quit mid-install). */
+export function resumeSetupAtLaunch(s: { onboarded: boolean; setupModels: string[] | null }): boolean {
+  return s.onboarded || !!s.setupModels?.length
+}

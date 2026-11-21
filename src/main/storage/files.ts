@@ -54,11 +54,35 @@ export function renameMeetingFolder(folder: string, meta: MeetingMeta): string {
   }
 }
 
+const BUSY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES'])
+const RETRY_MS = [50, 100, 200, 400, 800]
+
+/** Blocks this thread for a moment (the writes here are synchronous). */
+function pause(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * Windows: antivirus, OneDrive or a reader (Claude's MCP server, the file watcher) holding the file
+ * makes writes and renames fail with EPERM/EBUSY/EACCES for a moment. Try again a few times.
+ */
+function withRetry<T>(fn: () => T): T {
+  for (let i = 0; ; i++) {
+    try {
+      return fn()
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code ?? ''
+      if (process.platform !== 'win32' || !BUSY_CODES.has(code) || i >= RETRY_MS.length) throw err
+      pause(RETRY_MS[i])
+    }
+  }
+}
+
 /** Write-then-rename, so Claude (MCP) and the file watcher never read a half-written file mid-call. */
 function writeAtomic(file: string, data: string): void {
   const tmp = join(dirname(file), `.${basename(file)}.tmp`)
-  writeFileSync(tmp, data)
-  renameSync(tmp, file)
+  withRetry(() => writeFileSync(tmp, data))
+  withRetry(() => renameSync(tmp, file))
 }
 
 export function writeMeeting(folder: string, meta: MeetingMeta, segments: Segment[]): void {
