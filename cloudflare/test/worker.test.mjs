@@ -471,8 +471,15 @@ test("size limits", async () => {
   // Hebrew letters are 2 bytes each in UTF-8.
   r = await upload(e, meeting({ transcript: "א".repeat(1_000_001) }));
   assert.equal(r.status, 413);
-  r = await upload(e, meeting({ transcript: "א".repeat(999_999) }));
+  r = await upload(e, meeting({ transcript: "א".repeat(990_000) }));
   assert.equal(r.status, 200);
+  // D1 holds at most 2,000,000 bytes per row: a transcript just under 2 MB plus a summary doesn't fit
+  // (the real D1 fails the INSERT; local SQLite would not), so it is refused before D1 with a clear 413.
+  r = await upload(e, meeting({ transcript: "א".repeat(999_999) }));
+  assert.equal(r.status, 413);
+  r = await upload(e, meeting({ transcript: "a".repeat(1_950_000), summary: "ב".repeat(99_000) }));
+  assert.equal(r.status, 413);
+  assert.match(r.data.error, /together/);
   r = await upload(e, meeting({ summary: "ב".repeat(100_001) }));
   assert.equal(r.status, 413);
   // MCP bodies are small.

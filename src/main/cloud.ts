@@ -2,6 +2,7 @@ import { safeStorage } from 'electron'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { toMarkdown } from '@shared/transcript'
+import { fitMeetingPayload } from './cloudPayload'
 import { dataDir } from './paths'
 import { settings } from './settings'
 import { db } from './storage/db'
@@ -142,18 +143,23 @@ async function upload(id: string): Promise<void> {
   if (!m || m.meta.status !== 'done') return
   const meta = m.meta
   const people = (meta.attendees ?? []).filter((a) => !a.isMe).map((a) => a.name || a.email)
-  const r = await call('POST', '/api/meetings', {
-    id: meta.id,
-    title: meta.title,
-    startedAt: meta.startedAt,
-    durationSec: meta.durationSec ?? 0,
-    source: meta.source,
-    participants: people.length ? people : meta.inferredParticipants ?? [],
-    scope: meta.scope ?? null,
-    calendarTitle: meta.calendarEvent?.title ?? null,
-    transcript: toMarkdown(meta, m.segments, settings.value.userName).slice(0, 1_900_000),
-    summary: m.summary
-  })
+  // Cut to what one D1 row holds, in bytes (Hebrew is 2 bytes a letter): a longer body would get 413 forever.
+  const body = fitMeetingPayload(
+    {
+      id: meta.id,
+      title: meta.title,
+      startedAt: meta.startedAt,
+      durationSec: meta.durationSec ?? 0,
+      source: meta.source,
+      participants: people.length ? people : meta.inferredParticipants ?? [],
+      scope: meta.scope ?? null,
+      calendarTitle: meta.calendarEvent?.title ?? null,
+      transcript: toMarkdown(meta, m.segments, settings.value.userName),
+      summary: m.summary ?? null
+    },
+    settings.value.uiLanguage === 'en' ? 'en' : 'he'
+  )
+  const r = await call('POST', '/api/meetings', body)
   if (!r.ok) throw new Error(`upload ${id}: ${r.status}`)
 }
 

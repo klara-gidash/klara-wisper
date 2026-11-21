@@ -85,6 +85,9 @@ Meeting body (unknown extra fields are ignored):
 | `transcript` | string | Markdown, at most 2 MB (2,000,000 bytes of UTF-8) |
 | `summary` | string or null | Markdown, at most 200,000 bytes; missing means null |
 
+D1 holds at most 2,000,000 bytes per row, so all the fields together (in practice transcript + summary) must stay
+under 1,990,000 bytes of UTF-8, or the upload gets 413. The app cuts a very long transcript to fit.
+
 ## Phone link
 
 `GET /rec/<KLARA_REC_TOKEN>` serves a self-contained mobile page (inline CSS and JS under a per-response nonce CSP,

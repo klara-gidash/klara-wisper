@@ -21,8 +21,11 @@ const SUPPORTED_PROTOCOLS = new Set(["2025-06-18", "2025-03-26", "2024-11-05"]);
 const TIME_ZONE = "Asia/Jerusalem";
 
 const MIN_TOKEN_LENGTH = 32;
-const MAX_TRANSCRIPT_BYTES = 2_000_000; // 2 MB of UTF-8, also D1's per-value limit
+const MAX_TRANSCRIPT_BYTES = 2_000_000; // 2 MB of UTF-8
 const MAX_SUMMARY_BYTES = 200_000;
+// D1 allows 2,000,000 bytes per row (all columns together), so transcript + summary + the rest must fit under it,
+// with room for the other columns and SQLite's record header. Over it, D1 fails the INSERT.
+const MAX_ROW_BYTES = 1_990_000;
 const MAX_UPLOAD_BODY = 8 * 1024 * 1024; // room for a 2 MB transcript even if the client escapes non-ASCII
 const MAX_MCP_BODY = 128 * 1024;
 const MAX_SMALL_BODY = 4 * 1024;
@@ -287,6 +290,12 @@ function validateMeeting(b) {
   const summary = nullable("summary", MAX_SUMMARY_BYTES);
   if (summary && utf8Length(summary, MAX_SUMMARY_BYTES) > MAX_SUMMARY_BYTES) {
     throw new HttpError(413, "summary is larger than 200 KB");
+  }
+  const row =
+    utf8Length(b.transcript) + utf8Length(summary || "") + utf8Length(b.title) + utf8Length(scope || "") +
+    utf8Length(calendarTitle || "") + utf8Length(JSON.stringify(b.participants)) + utf8Length(b.source) + b.id.length;
+  if (row > MAX_ROW_BYTES) {
+    throw new HttpError(413, "transcript and summary together are larger than 2 MB, the most one D1 row can hold");
   }
   return {
     id: b.id,
