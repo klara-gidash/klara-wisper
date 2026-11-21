@@ -4,7 +4,7 @@
 #   server sees it live and sees the calendar event -> the call ends -> the meeting is finished
 #   (meta.json done, audio.m4a, calendar title) -> list_meetings shows it -> uninstall.
 #   pwsh -File scripts\ci\e2e\win-w2-call.ps1 -Setup "<path>\Klara Wisper Setup.exe"
-# env: FFMPEG_EXE (pinned ffmpeg.exe), E2E_OUT
+# env: E2E_OUT (sounddevice installed for the setup-python interpreter)
 param([Parameter(Mandatory)][string]$Setup)
 . "$PSScriptRoot\common.ps1"
 . "$PSScriptRoot\win-audio.ps1"
@@ -12,8 +12,11 @@ param([Parameter(Mandatory)][string]$Setup)
 $Title = 'בדיקת שיחה'
 $ClipMine = Join-Path $Root 'engine\tests\audio\he.wav'          # my side (into CABLE Input = the mic)
 $ClipOther = Join-Path $Root 'engine\tests\audio\conversation.wav' # the other side (default output)
-$CallDir = 'C:\e2e-call'
-$Zoom = Join-Path $CallDir 'zoom.exe'
+# The fake call app: a copy of python.exe named zoom.exe next to the real one (it needs the DLLs there)
+# running hold_mic.py, which keeps the default microphone open (ffmpeg's dshow input can't open
+# VB-Cable on Windows Server).
+$PyDir = Split-Path -Parent (Get-Command python).Source
+$Zoom = Join-Path $PyDir 'zoom.exe'
 $Folder = Join-Path $env:RUNNER_TEMP 'KlaraMeetings'
 $Ics = Join-Path $Out 'calendar.ics'
 $ConsentKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\NonPackaged'
@@ -34,7 +37,7 @@ try {
   & python -X utf8 (Join-Path $E2E 'play.py') --list 2>&1 | Write-Host
 
   Install-Klara $Setup
-  New-Item -ItemType Directory -Force -Path (Join-Path $env:APPDATA 'Claude'), $Folder, $CallDir | Out-Null
+  New-Item -ItemType Directory -Force -Path (Join-Path $env:APPDATA 'Claude'), $Folder | Out-Null
   & python -X utf8 (Join-Path $E2E 'make_ics.py') $Ics
   if ($LASTEXITCODE -ne 0) { Fail 'calendar .ics' 'make_ics.py failed' }
   $env:KLARA_E2E_ICS_FILE = $Ics
@@ -45,13 +48,14 @@ try {
   $micItem = (Get-Health).items | Where-Object { $_.id -eq 'microphone' } | Select-Object -First 1
   if ($micItem.status -ne 'ok') { Soft-Fail 'health microphone (VB-Cable counts as a mic with KLARA_E2E=1)' "$($micItem.status) $($micItem.code) $($micItem.detail)" } else { Pass 'health microphone' $micItem.detail }
 
-  # --- the call: a "zoom.exe" (ffmpeg renamed) that records from the default microphone device.
-  if (-not $env:FFMPEG_EXE -or -not (Test-Path -LiteralPath $env:FFMPEG_EXE)) { Fail 'ffmpeg' "FFMPEG_EXE=$env:FFMPEG_EXE" }
-  Copy-Item -Force -LiteralPath $env:FFMPEG_EXE -Destination $Zoom
+  # --- the call: "zoom.exe" (python.exe renamed) holding the default microphone.
+  Copy-Item -Force -LiteralPath (Get-Command python).Source -Destination $Zoom
   $logBefore = (Read-Log).Length
-  $zoomProc = Start-Process -FilePath $Zoom -PassThru -WindowStyle Hidden -RedirectStandardError (Join-Path $Out 'zoom-ffmpeg.txt') `
-    -ArgumentList '-hide_banner', '-loglevel', 'warning', '-f', 'dshow', '-i', "audio=`"$CableOutputName`"", '-t', '1200', '-f', 'null', 'NUL'
-  Pass 'fake call started' "zoom.exe pid $($zoomProc.Id) recording from $CableOutputName"
+  $zoomProc = Start-Process -FilePath $Zoom -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $Out 'zoom-out.txt') -RedirectStandardError (Join-Path $Out 'zoom-err.txt') `
+    -ArgumentList '-X', 'utf8', "`"$(Join-Path $E2E 'hold_mic.py')`"", '1200'
+  Start-Sleep 5
+  if ($zoomProc.HasExited) { Fail 'fake call app holds the microphone' "zoom.exe exited $($zoomProc.ExitCode): $(Get-Content -Raw -ErrorAction SilentlyContinue (Join-Path $Out 'zoom-err.txt'))" }
+  Pass 'fake call started' "zoom.exe pid $($zoomProc.Id) holding $CableOutputName"
   Start-Sleep 15
   $entry = Get-ItemProperty -LiteralPath (Join-Path $ConsentKey $ConsentName) -ErrorAction SilentlyContinue
   if ($entry -and $entry.LastUsedTimeStart -and $entry.LastUsedTimeStop -eq 0) {
