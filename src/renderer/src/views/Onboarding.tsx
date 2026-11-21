@@ -14,7 +14,7 @@ import { SetupProgress } from '../components/SetupProgress'
 import { Button, Card, cn, Kbd, Segmented, Spinner, Toggle } from '../components/ui'
 import { VoiceEnroll } from '../components/VoiceEnroll'
 import { invoke, setSettings, useAppState } from '../lib/api'
-import { modelName } from '../lib/format'
+import { hotkeyLabelKey, modelName } from '../lib/format'
 
 /**
  * The install wizard (first launch): checks the computer, asks two questions, picks the version
@@ -162,7 +162,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           </div>
           <AnimatePresence mode="wait">
             <motion.div key={step} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.25 }}>
-              {step === 'welcome' && <Welcome />}
+              {step === 'welcome' && <Welcome mac={mac} />}
               {step === 'check' && <CheckStep report={report} checking={checking} onCheck={() => void check()} />}
               {step === 'ask' && report && plan && <AskStep report={report} wishes={wishes} setWishes={setWishes} plan={plan} />}
               {step === 'install' && app && (
@@ -181,7 +181,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   <div className="mt-6">
                     <PermissionList />
                   </div>
-                  {app?.settings.hotkey === 'fn' && (
+                  {mac && app?.settings.hotkey === 'fn' && (
                     <div className="mt-4 flex items-start gap-3 rounded-xl bg-accent-soft p-3.5 text-[12.5px] leading-relaxed text-ink">
                       <Kbd>🌐</Kbd>
                       <span>{t('onb.fnTip')}</span>
@@ -242,7 +242,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   </p>
                   {wishes.uses.includes('dictation') && (
                     <div className="mx-auto mt-7 flex w-fit items-center gap-3 rounded-2xl border border-line bg-panel px-5 py-4 shadow-card">
-                      <Kbd>{t(`wiz.key_${app?.settings.hotkey ?? 'fn'}`)}</Kbd>
+                      <Kbd>{t(hotkeyLabelKey(app?.settings.hotkey, app?.platform))}</Kbd>
                       <span className="text-[13.5px]">{t('wiz.tryIt')}</span>
                       <Mic size={16} className="text-accent" />
                     </div>
@@ -281,7 +281,7 @@ function Body({ children }: { children: ReactNode }) {
   return <p className="mt-1.5 text-[13.5px] leading-relaxed text-ink-2">{children}</p>
 }
 
-function Welcome() {
+function Welcome({ mac }: { mac: boolean }) {
   const { t } = useTranslation()
   return (
     <div className="text-center">
@@ -299,7 +299,7 @@ function Welcome() {
           </div>
         ))}
       </div>
-      <div className="mt-6 text-[12px] text-ink-3">{t('onb.private')} · {t('wiz.welcomeTime')}</div>
+      <div className="mt-6 text-[12px] text-ink-3">{mac ? t('onb.private') : t('onb.privateWin')} · {t('wiz.welcomeTime')}</div>
     </div>
   )
 }

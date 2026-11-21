@@ -2,7 +2,7 @@ import { AlertTriangle, Check, Download, RefreshCw, WifiOff } from 'lucide-react
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { SetupState } from '@shared/types'
-import { invoke } from '../lib/api'
+import { invoke, useAppState } from '../lib/api'
 import { Button, Spinner } from './ui'
 
 const gb = (bytes: number): string => (bytes / 1e9).toFixed(bytes >= 1e9 ? 1 : 2)
@@ -36,6 +36,9 @@ export function SetupProgress({ setup, bare = false }: { setup: SetupState; bare
   const seconds = useCountdown(setup.retryAt)
   const start = (): void => void invoke('setup:retry')
   const kind = setup.errorKind ?? 'unknown'
+  // Windows words where they differ (the Recycle Bin, not the Trash): an `…Win` key wins when there is one.
+  const win = useAppState()?.platform === 'win32'
+  const errorBody = t(win ? [`setupx.errorBody_${kind}Win`, `setupx.errorBody_${kind}`] : `setupx.errorBody_${kind}`)
   const modelsTotal = setup.models?.reduce((sum, m) => sum + m.bytes, 0) ?? 0
 
   return (
@@ -89,7 +92,7 @@ export function SetupProgress({ setup, bare = false }: { setup: SetupState; bare
           <WifiOff size={16} className="mt-0.5 shrink-0 text-warn" />
           <div className="min-w-0 flex-1">
             <div className="font-medium">{t(`setupx.errorTitle_${kind}`)}</div>
-            <div className="mt-0.5 text-ink-2">{t(`setupx.errorBody_${kind}`)}</div>
+            <div className="mt-0.5 text-ink-2">{errorBody}</div>
             <div className="mt-2 flex flex-wrap items-center gap-3">
               <span className="text-[12px] text-ink-3">{seconds > 0 ? t('setupx.retryIn', { s: seconds, n: setup.attempt ?? 1 }) : t('setupx.retrying')}</span>
               {seconds > 0 && <Button size="sm" onClick={start}>{t('setupx.retryNow')}</Button>}
@@ -103,7 +106,7 @@ export function SetupProgress({ setup, bare = false }: { setup: SetupState; bare
           <AlertTriangle size={16} className="mt-0.5 shrink-0 text-rec" />
           <div className="min-w-0">
             <div className="font-medium">{t(`setupx.errorTitle_${kind}`)}</div>
-            <div className="mt-0.5 text-ink-2">{t(`setupx.errorBody_${kind}`)}</div>
+            <div className="mt-0.5 text-ink-2">{errorBody}</div>
             <details className="mt-1.5">
               <summary className="cursor-pointer text-[11.5px] text-ink-3">{t('setupx.details')}</summary>
               <div dir="ltr" className="selectable mt-1 break-words text-start text-[11.5px] text-ink-3">{setup.error}</div>

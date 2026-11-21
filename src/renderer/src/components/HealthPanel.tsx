@@ -46,6 +46,9 @@ export function HealthPanel({
 }) {
   const { t } = useTranslation()
   const app = useAppState()
+  // Windows words where they differ (Windows Settings, the Recycle Bin): an `…Win` key wins when there is one.
+  const win = app?.platform === 'win32'
+  const tw = (key: string, opts?: Record<string, unknown>): string => t(win ? [`${key}Win`, key] : key, opts)
   const [items, setItems] = useState<HealthItem[] | null>(null)
   const [report, setReport] = useState<HealthReport | null>(null)
   const [running, setRunning] = useState(false)
@@ -132,7 +135,7 @@ export function HealthPanel({
                   {i.status === 'ok' && i.detail && <span dir="ltr" className="truncate text-[12px] text-ink-3">{i.detail}</span>}
                 </div>
                 {i.code && i.status !== 'ok' && (
-                  <div className="mt-0.5 text-[12px] leading-snug text-ink-2">{t(`health.${i.id}_${i.code}`, { defaultValue: t('health.error') })}</div>
+                  <div className="mt-0.5 text-[12px] leading-snug text-ink-2">{tw(`health.${i.id}_${i.code}`, { defaultValue: t('health.error') })}</div>
                 )}
                 {i.detail && i.status !== 'ok' && i.status !== 'running' && (
                   <div dir="ltr" className="selectable mt-0.5 break-words text-start text-[11px] text-ink-3">{i.detail}</div>
@@ -158,7 +161,7 @@ export function HealthPanel({
       {phase === 'error' && app?.setup.error && (
         <div className="rounded-xl bg-rec-soft p-3 text-[12px] leading-relaxed">
           <div className="font-medium">{t(`setupx.errorTitle_${app.setup.errorKind ?? 'unknown'}`)}</div>
-          <div className="mt-0.5 text-ink-2">{t(`setupx.errorBody_${app.setup.errorKind ?? 'unknown'}`)}</div>
+          <div className="mt-0.5 text-ink-2">{tw(`setupx.errorBody_${app.setup.errorKind ?? 'unknown'}`)}</div>
           <div dir="ltr" className="selectable mt-1 break-words text-start text-[11px] text-ink-3">{app.setup.error}</div>
         </div>
       )}

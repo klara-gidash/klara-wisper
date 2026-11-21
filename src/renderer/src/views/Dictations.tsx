@@ -4,12 +4,13 @@ import { useTranslation } from 'react-i18next'
 import type { Dictation } from '@shared/types'
 import { DictateButton } from '../components/Controls'
 import { Empty, Kbd } from '../components/ui'
-import { invoke, useEvent } from '../lib/api'
-import { dayLabel, groupByDay, highlight, timeHM } from '../lib/format'
+import { invoke, useAppState, useEvent } from '../lib/api'
+import { dayLabel, groupByDay, highlight, hotkeyLabelKey, timeHM } from '../lib/format'
 
 export function Dictations() {
   const { t, i18n } = useTranslation()
   const lang = i18n.language
+  const app = useAppState()
   const [q, setQ] = useState('')
   const [items, setItems] = useState<Dictation[] | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
@@ -42,7 +43,7 @@ export function Dictations() {
           icon={<Keyboard size={24} />}
           title={q ? t('dict.noResults') : t('dict.empty')}
           body={q ? undefined : t('dict.emptyBody')}
-          action={!q ? <div className="flex items-center gap-1.5 text-[12.5px] text-ink-2"><Kbd>fn</Kbd> {t('dict.hold')}</div> : undefined}
+          action={!q ? <div className="flex items-center gap-1.5 text-[12.5px] text-ink-2"><Kbd>{app?.platform === 'win32' ? t(hotkeyLabelKey(app.settings.hotkey, app.platform)) : 'fn'}</Kbd> {t('dict.hold')}</div> : undefined}
         />
       ) : (
         <div className="mt-6 flex flex-col gap-6">

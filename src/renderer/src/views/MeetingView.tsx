@@ -175,14 +175,14 @@ export function MeetingView({ id: rawId, onBack }: { id: string; onBack: () => v
             <IconButton title={t('meeting.copy')} onClick={() => void invoke('meetings:copy', id).then(() => flash(t('meeting.copied')))}>
               <Copy size={15} />
             </IconButton>
-            <IconButton title={t('meeting.reveal')} onClick={() => void invoke('meetings:reveal', id)}>
+            <IconButton title={t(app?.platform === 'win32' ? 'meeting.revealWin' : 'meeting.reveal')} onClick={() => void invoke('meetings:reveal', id)}>
               <FolderOpen size={15} />
             </IconButton>
             <IconButton
               title={t('meeting.delete')}
               className="hover:text-rec"
               onClick={() => {
-                if (window.confirm(t('meeting.deleteConfirm'))) void invoke('meetings:delete', id).then(onBack)
+                if (window.confirm(t(app?.platform === 'win32' ? 'meeting.deleteConfirmWin' : 'meeting.deleteConfirm'))) void invoke('meetings:delete', id).then(onBack)
               }}
             >
               <Trash2 size={15} />

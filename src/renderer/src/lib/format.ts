@@ -74,3 +74,12 @@ export function modelName(key: string | null | undefined): string {
   if (key.includes('turbo')) return 'Whisper large-v3 turbo'
   return 'Whisper large-v3'
 }
+
+/**
+ * The i18n key of the dictation key's label (wiz.key_*). On Windows "rightOption" is the Right Alt key,
+ * so it gets its own label; the other keys read the same on both systems.
+ */
+export function hotkeyLabelKey(hotkey: string | undefined, platform: string | undefined): string {
+  const key = hotkey ?? (platform === 'win32' ? 'rightControl' : 'fn')
+  return `wiz.key_${key}${platform === 'win32' && key === 'rightOption' ? 'Win' : ''}`
+}

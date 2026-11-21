@@ -14,9 +14,13 @@ export async function explainMicDenied(): Promise<void> {
     defaultId: 0,
     cancelId: 1,
     message: he ? 'אין ל-Klara Wisper גישה למיקרופון' : 'Klara Wisper can’t use the microphone',
-    detail: he
-      ? 'בהגדרות המערכת > פרטיות ואבטחה > מיקרופון, צריך להפעיל את המתג של Klara Wisper ואז לנסות שוב.'
-      : 'In System Settings > Privacy & Security > Microphone, turn on Klara Wisper, then try again.'
+    detail: process.platform === 'win32'
+      ? he
+        ? 'בהגדרות של Windows ← פרטיות ואבטחה ← מיקרופון, צריך להדליק את הגישה למיקרופון, וגם את הגישה של אפליקציות שולחן עבודה, ואז לנסות שוב.'
+        : 'In Windows Settings > Privacy & security > Microphone, turn on “Microphone access” and “Let desktop apps access your microphone”, then try again.'
+      : he
+        ? 'בהגדרות המערכת > פרטיות ואבטחה > מיקרופון, צריך להפעיל את המתג של Klara Wisper ואז לנסות שוב.'
+        : 'In System Settings > Privacy & Security > Microphone, turn on Klara Wisper, then try again.'
   })
   if (response === 0) void shell.openExternal(PANE)
 }

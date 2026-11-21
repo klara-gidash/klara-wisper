@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { GoogleCalendarState } from '@shared/types'
 import { Button, cn, Spinner } from './ui'
-import { invoke } from '../lib/api'
+import { invoke, useAppState } from '../lib/api'
 
 const GOOGLE_SETTINGS = 'https://calendar.google.com/calendar/r/settings'
 
@@ -19,6 +19,7 @@ const NEEDS_RELINK: Record<string, string> = {
 /** Google Calendar through its secret iCal link: paste once, the app keeps it encrypted (src/main/googleCalendar.ts). */
 export function GoogleCalendarSection({ onChange }: { onChange?: (s: GoogleCalendarState | null) => void } = {}) {
   const { t, i18n } = useTranslation()
+  const win = useAppState()?.platform === 'win32'
   const [st, setSt] = useState<State | null>(null)
   const [link, setLink] = useState('')
   const [editing, setEditing] = useState(false)
@@ -67,7 +68,7 @@ export function GoogleCalendarSection({ onChange }: { onChange?: (s: GoogleCalen
 
   return (
     <div className="flex flex-col gap-3 px-4 py-3.5">
-      <div className="text-[12.5px] leading-relaxed text-ink-2">{t('gcal.hint')}</div>
+      <div className="text-[12.5px] leading-relaxed text-ink-2">{t(win ? 'gcal.hintWin' : 'gcal.hint')}</div>
 
       {st.linked && !st.needsRelink && (
         <div className="flex items-center gap-2 rounded-[10px] bg-panel-2 px-3 py-2">

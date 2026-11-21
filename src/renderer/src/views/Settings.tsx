@@ -223,6 +223,9 @@ export function Settings() {
     'zoom', 'meet', 'teams', 'slack', 'facetime', 'webex', 'aircall', 'whatsapp', 'telegram', 'discord', 'signal', 'messenger', 'goto'
   ]
   const physical = app.mic.devices.filter((d) => !d.virtual)
+  // Windows has its own words (Right Ctrl / Right Alt, the processor instead of the Mac's GPU…) and no FaceTime.
+  const win = app.platform === 'win32'
+  const shownSources = win ? sources.filter((src) => src !== 'facetime') : sources
 
   return (
     <div className="mx-auto max-w-[760px] px-10 pb-20 pt-14">
@@ -257,7 +260,7 @@ export function Settings() {
       </Section>
 
       <Section title={t('set.dictation')}>
-        <Row label={t('set.hotkey')} hint={s.hotkey === 'fn' ? t('set.hotkeyFnHint') : t('set.hotkeyHint')}>
+        <Row label={t('set.hotkey')} hint={s.hotkey === 'fn' && !win ? t('set.hotkeyFnHint') : t('set.hotkeyHint')}>
           <select
             value={s.hotkey}
             onChange={(e) => set({ hotkey: e.target.value as HotkeyName })}
@@ -265,8 +268,8 @@ export function Settings() {
           >
             {app.platform === 'win32' ? (
               <>
-                <option value="rightControl">Right Ctrl</option>
-                <option value="rightOption">Right Alt</option>
+                <option value="rightControl">{t('set.rightCtrlWin')}</option>
+                <option value="rightOption">{t('set.rightAltWin')}</option>
               </>
             ) : (
               <>
@@ -300,7 +303,7 @@ export function Settings() {
           <Toggle checked={s.autoRecord} onChange={(v) => set({ autoRecord: v })} />
         </Row>
         <div className="flex flex-wrap gap-2 px-4 py-3.5">
-          {sources.map((src) => (
+          {shownSources.map((src) => (
             <button
               key={src}
               onClick={() => set({ detect: { ...s.detect, [src]: !s.detect[src] } })}
@@ -330,7 +333,7 @@ export function Settings() {
       </div>
 
       <Section title={t('set.microphone')}>
-        <Row label={t('set.micChoice')} hint={app.mic.auto ? t('set.micAutoHint', { name: app.mic.currentName ?? '—' }) : undefined}>
+        <Row label={t('set.micChoice')} hint={app.mic.auto ? t(win ? 'set.micAutoHintWin' : 'set.micAutoHint', { name: app.mic.currentName ?? '—' }) : undefined}>
           <select
             value={s.micUid ?? ''}
             onChange={(e) => set({ micUid: e.target.value || null })}
@@ -387,7 +390,7 @@ export function Settings() {
             <Button size="sm" disabled={busy === 'desktop'} onClick={() => void connect('desktop')}>{t('set.connect')}</Button>
           )}
         </Row>
-        <Row label="Claude Code" hint={claude && !claude.codeCli ? t('set.cliMissing') : undefined}>
+        <Row label="Claude Code" hint={claude && !claude.codeCli ? t(win ? 'set.cliMissingWin' : 'set.cliMissing') : undefined}>
           {claude?.code ? (
             <span className="flex items-center gap-1 text-[12.5px] font-medium text-ok"><Check size={14} /> {t('set.connected')}</span>
           ) : (
@@ -396,10 +399,11 @@ export function Settings() {
         </Row>
         <Row
           label={t('set.autoSummary')}
-          hint={!s.autoSummary ? undefined : !auth ? '…' : !auth.cli ? t('set.autoSummaryNoCli') : auth.signedIn ? t('set.autoSummaryReady') : t('set.autoSummaryLogin')}
+          // Automatic summaries run on the Mac only (src/main/summarize.ts): Windows says so instead of the Mac sign-in steps.
+          hint={win ? t('set.autoSummaryWin') : !s.autoSummary ? undefined : !auth ? '…' : !auth.cli ? t('set.autoSummaryNoCli') : auth.signedIn ? t('set.autoSummaryReady') : t('set.autoSummaryLogin')}
         >
           <div className="flex items-center gap-2">
-            {s.autoSummary && auth?.cli && !auth.signedIn && (
+            {!win && s.autoSummary && auth?.cli && !auth.signedIn && (
               <>
                 <Button size="sm" variant="ghost" onClick={checkAuth}>{t('set.check')}</Button>
                 <Button size="sm" onClick={() => void invoke('claude:signIn').catch((err) => window.alert(String(err)))}>{t('set.signIn')}</Button>
@@ -508,7 +512,7 @@ export function Settings() {
             {busy === 'asr' && <div className="mt-2 flex items-center gap-2 text-[12px] text-ink-2"><Spinner /> {t('set.asrWorking')}</div>}
           </div>
         )}
-        <Row label={`${modelName(app.engine.asr)} (${app.platform === 'darwin' ? 'MLX' : 'CTranslate2'})`} hint={t('set.engineHint')}>
+        <Row label={`${modelName(app.engine.asr)} (${app.platform === 'darwin' ? 'MLX' : 'CTranslate2'})`} hint={t(win ? 'set.engineHintWin' : 'set.engineHint')}>
           <span className="text-[12.5px] text-ink-2">{app.engine.state === 'ready' ? t('engine.ready') : app.engine.state}</span>
         </Row>
         <Row label="NVIDIA Nemotron-3-Diarization" hint={t('set.diarHint')}>

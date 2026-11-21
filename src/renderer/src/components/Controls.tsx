@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Levels } from '@shared/types'
 import { invoke, useAppState, useEvent } from '../lib/api'
+import { hotkeyLabelKey } from '../lib/format'
 import { Button, Kbd, Spinner, cn } from './ui'
 import { Waveform } from './Waveform'
 
@@ -23,6 +24,9 @@ export function DictateButton({ large = false, compact = false }: { large?: bool
   useEvent<DictState>('dictation:state', setSt)
   useEvent<Levels>('levels', (l) => setDb(l.mic))
   const ready = app?.engine.state === 'ready'
+  // Windows has no ⌃⌥ symbols and no fn key: Ctrl+Alt+Space, and the push-to-talk key chosen in Settings.
+  const win = app?.platform === 'win32'
+  const toggleKeys = win ? 'Ctrl+Alt+Space' : '⌃⌥Space'
 
   if (compact) {
     const rec = st.phase === 'recording'
@@ -30,7 +34,7 @@ export function DictateButton({ large = false, compact = false }: { large?: bool
       <button
         onClick={() => void invoke('dictation:toggle')}
         disabled={!ready || st.phase === 'transcribing'}
-        title={`${rec ? t('dict.stop') : t('dict.start')} · ⌃⌥Space`}
+        title={`${rec ? t('dict.stop') : t('dict.start')} · ${toggleKeys}`}
         className={cn(
           'inline-flex h-7 items-center gap-1.5 rounded-[10px] px-2.5 text-[12.5px] font-medium shadow-sm transition-all active:scale-[0.98] disabled:opacity-40',
           rec ? 'bg-rec text-white' : 'bg-ink text-bg hover:opacity-90'
@@ -71,7 +75,7 @@ export function DictateButton({ large = false, compact = false }: { large?: bool
           </div>
         ) : (
           <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12.5px] text-ink-2">
-            {t('dict.orAnywhere')} <Kbd>⌃⌥Space</Kbd> {t('dict.or')} <Kbd>fn</Kbd>
+            {t('dict.orAnywhere')} <Kbd>{toggleKeys}</Kbd> {t('dict.or')} <Kbd>{win ? t(hotkeyLabelKey(app?.settings.hotkey, app?.platform)) : 'fn'}</Kbd>
           </div>
         )}
       </div>

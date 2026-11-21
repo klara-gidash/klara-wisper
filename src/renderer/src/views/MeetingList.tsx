@@ -6,12 +6,13 @@ import { SOURCE_LABEL } from '@shared/types'
 import { RecordControls } from '../components/Controls'
 import { MeetingRow } from '../components/MeetingRow'
 import { Empty, Segmented } from '../components/ui'
-import { invoke, useEvent } from '../lib/api'
+import { invoke, useAppState, useEvent } from '../lib/api'
 import { dayLabel, groupByDay } from '../lib/format'
 
 export function MeetingList({ mode, onOpen }: { mode: 'meeting' | 'inperson'; onOpen: (id: string) => void }) {
   const { t, i18n } = useTranslation()
   const lang = i18n.language
+  const win = useAppState()?.platform === 'win32'
   const [items, setItems] = useState<MeetingSummary[] | null>(null)
   const [source, setSource] = useState<'all' | MeetingSource>('all')
 
@@ -44,7 +45,7 @@ export function MeetingList({ mode, onOpen }: { mode: 'meeting' | 'inperson'; on
         <Empty
           icon={mode === 'inperson' ? <Users size={24} /> : <Video size={24} />}
           title={mode === 'inperson' ? t('list.emptyInperson') : t('list.emptyMeetings')}
-          body={mode === 'inperson' ? t('list.emptyInpersonBody') : t('list.emptyMeetingsBody')}
+          body={mode === 'inperson' ? t(win ? 'list.emptyInpersonBodyWin' : 'list.emptyInpersonBody') : t('list.emptyMeetingsBody')}
         />
       ) : (
         <div className="mt-6 flex flex-col gap-6">

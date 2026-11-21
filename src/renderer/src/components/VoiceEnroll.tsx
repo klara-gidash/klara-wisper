@@ -46,7 +46,7 @@ export function VoiceEnroll({ onDone }: { onDone?: () => void }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="text-[12.5px] leading-relaxed text-ink-2">{t('voice.why')}</div>
+      <div className="text-[12.5px] leading-relaxed text-ink-2">{t(app?.platform === 'win32' ? 'voice.whyWin' : 'voice.why')}</div>
       {phase === 'recording' && (
         <div className="selectable rounded-xl bg-panel-2 p-4 text-[14.5px] leading-[1.8]">
           <p dir="rtl">{t('voice.readHe')}</p>

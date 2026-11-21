@@ -56,7 +56,7 @@ export function IntegrationsSection() {
 
   return (
     <>
-      <Row label={t('set.claudePush')} hint={t('set.claudePushHint')}>
+      <Row label={t('set.claudePush')} hint={t(app.platform === 'win32' ? 'set.claudePushHintWin' : 'set.claudePushHint')}>
         <Segmented<Settings['claudePush']>
           value={push}
           onChange={(v) => void setSettings({ claudePush: v })}

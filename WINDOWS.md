@@ -3,7 +3,7 @@
 Target: Windows 10 22H2 / Windows 11, x64. Install from a download link (`Klara Wisper Setup.exe`, per-user, no admin rights).
 There is no code-signing certificate, so SmartScreen asks once (see `docs/colleagues-install.he.md`).
 
-**Status (v0.1.1):** the Windows helper compiles and the installer builds on GitHub Actions (CI run 42072567985). `installers.yml` also smoke-tests the installer on `windows-latest`: silent install, first-run setup, engine start, uninstall. The startup crash and the console windows are fixed, and the Windows names of the call apps were added. **It has not been tried on a real Windows PC yet.**
+**Status (v0.1.1):** the Windows helper compiles and the installer builds on GitHub Actions (CI run 42072567985). `installers.yml` also smoke-tests the installer on `windows-latest`: silent install, first-run setup, engine start, uninstall. The startup crash and the console windows are fixed, and the Windows names of the call apps were added. Since 0.1.2 the end-to-end simulations (`.github/workflows/e2e.yml`, `scripts/ci/e2e/`) run on fresh GitHub Windows machines: clean install through the wizard (W1), a full call with live Hebrew transcription and the meeting title from a calendar feed (W2, a local .ics standing in for the Google link), a Hebrew user name in the profile path (W3), and an upgrade over a running install (W4). **No person has tried it on a physical Windows PC yet.**
 
 ## What is shared, what is rewritten
 
@@ -99,7 +99,7 @@ Timing is the same as on the Mac: most calls after 3 s on the mic, chat apps (Wh
 
 ## Known limits on Windows (first version)
 
-- Not tried on a real PC yet: the helper and the installer have only been built and smoke-tested on GitHub Actions.
+- Not tried by a person on a physical PC yet: the helper and the installer have been built, smoke-tested and run end to end (install, call, Hebrew profile, upgrade) only on GitHub's Windows machines.
 - Loopback records everything the PC plays, not only the call app (no per-process capture like the Mac tap; Windows 10 2004+ has process loopback, a possible later step).
 - Calendar names come only from Google Calendar (its secret iCal link). Outlook/Graph would need an account connection.
 - Automatic summaries run on the Mac only for now (`src/main/summarize.ts`). Push to Claude on Windows therefore only fires when "automatic summary" is switched off in Settings.
