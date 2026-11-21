@@ -71,8 +71,26 @@ function Initialize-Audio {
     Expand-Archive -Force "$dir\scream.zip" $dir
     $bat = Get-ChildItem -Recurse -LiteralPath $dir -Filter 'install-x64.bat' | Select-Object -First 1
     if (-not $bat) { throw 'install-x64.bat not in the Scream zip' }
-    Push-Location $bat.DirectoryName
-    try { & cmd.exe /c "echo.| `"$($bat.FullName)`"" 2>&1 | Write-Host } finally { Pop-Location }
+    # Trust the driver's publisher first: otherwise Windows asks "Would you like to install this device
+    # software?" in a dialog nobody can click on a runner, and the install waits forever.
+    foreach ($f in Get-ChildItem -Recurse -LiteralPath $dir -Include *.cat, *.sys) {
+      $cert = (Get-AuthenticodeSignature -LiteralPath $f.FullName).SignerCertificate
+      if ($cert) {
+        $store = New-Object Security.Cryptography.X509Certificates.X509Store('TrustedPublisher', 'LocalMachine')
+        $store.Open('ReadWrite'); $store.Add($cert); $store.Close()
+        Write-Host "trusted driver publisher: $($cert.Subject)"
+        break
+      }
+    }
+    # At most 3 minutes; if it still hangs, carry on without Scream (fallback below).
+    $p = Start-Process -FilePath cmd.exe -ArgumentList '/c', "echo.| `"$($bat.FullName)`"" -WorkingDirectory $bat.DirectoryName -PassThru -NoNewWindow
+    if (-not $p.WaitForExit(180000)) {
+      Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $p.Id } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+      Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+      Get-Process devcon, pnputil, drvinst -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+      throw 'the Scream install did not finish within 3 minutes (a driver prompt?)'
+    }
+    Write-Host "Scream install exit code $($p.ExitCode)"
     Restart-Service Audiosrv -Force -ErrorAction SilentlyContinue
     Start-Sleep 5
     $scream = Get-Endpoints | Where-Object { $_.Type -eq 'Playback' -and $_.Name -like '*Scream*' } | Select-Object -First 1

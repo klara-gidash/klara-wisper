@@ -115,6 +115,8 @@ jobs:
         shell: pwsh
         timeout-minutes: 100
         run: |
+          # A tag like e2e-7-only-w2-call runs just that scenario (and no macOS jobs).
+          if ('${{ github.ref_name }}' -match '-only-(.+)$' -and $Matches[1] -ne '${{ matrix.scenario }}') { Write-Host 'not selected by the tag'; exit 0 }
           $setup = (Resolve-Path 'installer\Klara Wisper Setup.exe').Path
           switch ('${{ matrix.scenario }}') {
             'w1-wizard'         { pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\ci\e2e\win-w1-wizard.ps1 -Setup $setup }
@@ -132,7 +134,7 @@ jobs:
           retention-days: 14
 
   build-mac:
-    if: github.event_name == 'push' || inputs.mac
+    if: (github.event_name == 'push' && !contains(github.ref_name, '-only-')) || inputs.mac
     runs-on: macos-15
     timeout-minutes: 60
     steps:
