@@ -20,13 +20,49 @@ interface MicUser {
 
 type Tabs = Record<string, { url: string; title: string }[]>
 
+/**
+ * Apple's own calls. An ordinary iPhone call answered on the Mac (Continuity) shows in the Phone app
+ * (macOS 26 and later, com.apple.mobilephone) or in FaceTime (older macOS); FaceTime calls show in
+ * FaceTime. The audio itself runs in system daemons: avconferenced (com.apple.avconferenced, the call
+ * audio engine of FaceTime and of relayed iPhone calls) and callservicesd (its bundle is
+ * com.apple.TelephonyUtilities). The helper names whichever process holds the microphone (CoreAudio's
+ * process list), and which one that is depends on the macOS version, so all of them are one call with
+ * one key ("app:apple", it never changes mid-call), named by the strongest evidence in the snapshot:
+ *  - the Phone app or callservicesd → a phone call;
+ *  - FaceTime → a FaceTime call;
+ *  - only the call audio daemon → a phone call (it can't say which; on the Mac that is mostly an iPhone call).
+ * Daemons have no app name, so the helper reports their bundle ID as the name.
+ */
+const APPLE_PHONE = ['com.apple.mobilephone', 'com.apple.telephonyutilities', 'com.apple.callservicesd']
+const APPLE_FACETIME = ['com.apple.facetime']
+const APPLE_CALL_AUDIO = ['com.apple.avconferenced', 'com.apple.videoconference']
+/** Windows: Phone Link (calls from the phone through the PC). */
+const PHONE_LINK = ['phoneexperiencehost.exe', 'microsoft.yourphone']
+
+type AppleKind = 'phone' | 'facetime' | 'audio'
+
+function appleKind(bundle: string): AppleKind | null {
+  const b = bundle.toLowerCase()
+  if (APPLE_PHONE.some((p) => b.startsWith(p))) return 'phone'
+  if (APPLE_FACETIME.some((p) => b.startsWith(p))) return 'facetime'
+  if (APPLE_CALL_AUDIO.some((p) => b.startsWith(p))) return 'audio'
+  return null
+}
+
+/** What an Apple call is, from every Apple call process holding the mic right now. */
+export function appleCallSource(bundles: string[]): MeetingSource | null {
+  const kinds = new Set(bundles.map(appleKind).filter((k): k is AppleKind => k !== null))
+  if (kinds.has('phone')) return 'phone'
+  if (kinds.has('facetime')) return 'facetime'
+  return kinds.has('audio') ? 'phone' : null
+}
+
 /** Desktop apps: their process using the microphone means a call. */
 const APPS: { prefix: string; source: MeetingSource; name: string }[] = [
   { prefix: 'us.zoom.xos', source: 'zoom', name: 'Zoom' },
   { prefix: 'us.zoom.CptHost', source: 'zoom', name: 'Zoom' }, // Zoom's sharing/audio host process
   { prefix: 'com.microsoft.teams', source: 'teams', name: 'Microsoft Teams' },
   { prefix: 'com.tinyspeck.slackmacgap', source: 'slack', name: 'Slack' },
-  { prefix: 'com.apple.FaceTime', source: 'facetime', name: 'FaceTime' },
   { prefix: 'com.cisco.webexmeetingsapp', source: 'webex', name: 'Webex' },
   { prefix: 'Cisco-Systems.Spark', source: 'webex', name: 'Webex' },
   { prefix: 'io.aircall.workspace', source: 'aircall', name: 'Aircall' },
@@ -292,8 +328,9 @@ export class Detector extends EventEmitter {
   update(users: MicUser[], tabs: Tabs): void {
     const now = Date.now()
     const current = new Map<string, Candidate>()
+    const apple = appleCallSource(users.map((u) => u.bundleID || ''))
     for (const u of users) {
-      const c = this.classify(u, tabs)
+      const c = this.classify(u, tabs, apple)
       if (c && !current.has(c.key)) current.set(c.key, c)
     }
     for (const [key, c] of current) {
@@ -324,9 +361,16 @@ export class Detector extends EventEmitter {
     return null
   }
 
-  private classify(u: MicUser, tabs: Tabs): Candidate | null {
+  private classify(u: MicUser, tabs: Tabs, apple: MeetingSource | null = null): Candidate | null {
     // Case-insensitive: helper bundles don't always keep the app's case (e.g. Arc's helper).
     const bundle = (u.bundleID || '').toLowerCase()
+    if (appleKind(bundle)) {
+      const source = apple ?? 'phone'
+      return { key: 'app:apple', source, appName: source === 'facetime' ? 'FaceTime' : 'Phone', micUids: u.inputDevices }
+    }
+    if (PHONE_LINK.some((p) => bundle.startsWith(p))) {
+      return { key: 'app:phonelink', source: 'phone', appName: 'Phone Link', micUids: u.inputDevices }
+    }
     const app = APPS.find((a) => bundle.startsWith(a.prefix.toLowerCase()))
     if (app) return { key: `app:${app.source}`, source: app.source, appName: app.name, micUids: u.inputDevices }
     const browser = BROWSERS.find((b) => bundle.startsWith(b.prefix.toLowerCase()))

@@ -14,7 +14,7 @@ export const defaults: Settings = {
   autoRecord: true,
   detect: {
     zoom: true, meet: true, teams: true, slack: true, facetime: true, webex: true, aircall: true,
-    whatsapp: true, telegram: true, discord: true, signal: true, messenger: true, goto: true
+    whatsapp: true, telegram: true, discord: true, signal: true, messenger: true, goto: true, phone: true
   },
   micUid: null,
   vocabulary: [],

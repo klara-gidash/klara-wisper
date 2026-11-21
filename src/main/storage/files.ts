@@ -99,6 +99,19 @@ export function writeMeeting(folder: string, meta: MeetingMeta, segments: Segmen
   writeAtomic(join(folder, 'transcript.md'), toMarkdown(m, segments, settings.value.userName, { frontMatter: true }))
 }
 
+/**
+ * transcript.md again from meta.json, when an edit made outside the app (Claude naming a speaker
+ * through MCP, a title) changed what it shows. Writes only when the text differs.
+ */
+export function refreshMarkdown(folder: string, meta: MeetingMeta, segments: Segment[]): boolean {
+  const file = join(folder, 'transcript.md')
+  const md = toMarkdown({ ...meta, folder }, segments, settings.value.userName, { frontMatter: true })
+  const old = existsSync(file) ? readFileSync(file, 'utf8') : null
+  if (old === md) return false
+  writeAtomic(file, md)
+  return true
+}
+
 export function writeMeta(folder: string, meta: MeetingMeta): void {
   writeAtomic(join(folder, 'meta.json'), JSON.stringify({ ...meta, folder }, null, 2))
 }

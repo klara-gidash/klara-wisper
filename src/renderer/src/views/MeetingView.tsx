@@ -3,9 +3,11 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Meeting } from '@shared/types'
 import { SOURCE_LABEL } from '@shared/types'
+import { unnamedSpeakers } from '@shared/speakerNames'
 import { fmtClock, fmtDuration, speakerName } from '@shared/transcript'
 import { SourceIcon } from '../components/SourceIcon'
 import { Transcript } from '../components/Transcript'
+import { AutoNamedNote, NameChips, WhoIsThis } from '../components/WhoIsThis'
 import { Button, IconButton, Segmented, Spinner, Toggle, cn } from '../components/ui'
 import { invoke, useAppState, useEvent } from '../lib/api'
 import { dayLabel, speakerColor, timeHM } from '../lib/format'
@@ -116,6 +118,7 @@ export function MeetingView({ id: rawId, onBack }: { id: string; onBack: () => v
   }
 
   const speakerLabels = Object.keys(meta.speakers ?? {}).length ? Object.keys(meta.speakers) : [...new Set(segments.map((s) => s.speaker ?? ''))].filter(Boolean)
+  const unnamed = unnamedSpeakers(meta, segments)
 
   return (
     <div className="flex min-h-full flex-col">
@@ -224,6 +227,12 @@ export function MeetingView({ id: rawId, onBack }: { id: string; onBack: () => v
         </div>
 
         <div className="mt-6">
+          {(tab === 'transcript' || tab === 'speakers') && segments.length > 0 && (
+            <>
+              <AutoNamedNote meeting={meeting} onDone={load} />
+              {tab === 'transcript' && <WhoIsThis meeting={meeting} userName={userName} onSeek={meta.hasAudio ? seek : undefined} onDone={load} />}
+            </>
+          )}
           {tab === 'transcript' &&
             (segments.length === 0 ? (
               <div className="py-16 text-center text-[13px] text-ink-3">{meta.status === 'error' ? meta.error : t('meeting.emptyTranscript')}</div>
@@ -247,9 +256,11 @@ export function MeetingView({ id: rawId, onBack }: { id: string; onBack: () => v
                 const lines = segments.filter((s) => s.speaker === label)
                 const talk = lines.reduce((a, s) => a + (s.end - s.start), 0)
                 return (
-                  <div key={label} className="flex items-center gap-3 rounded-xl border border-line bg-panel px-4 py-3">
+                  <div key={label} className="rounded-xl border border-line bg-panel px-4 py-3">
+                  <div className="flex items-center gap-3">
                     <span className="size-3 rounded-full" style={{ background: speakerColor(label, meta.speakers) }} />
                     <input
+                      key={info?.name ?? ''}
                       defaultValue={info?.name ?? ''}
                       placeholder={speakerName(label, meta.speakers, lang, userName)}
                       onBlur={(e) => {
@@ -259,6 +270,11 @@ export function MeetingView({ id: rawId, onBack }: { id: string; onBack: () => v
                       onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
                       className="min-w-0 flex-1 bg-transparent text-[14px] font-medium outline-none placeholder:text-ink"
                     />
+                    {info?.auto && (
+                      <span title={t('meeting.autoBadgeTitle')} className="flex items-center gap-1 rounded-full bg-panel-2 px-2 py-0.5 text-[11px] text-ink-2">
+                        <Sparkles size={10} /> {t('meeting.autoBadge')}
+                      </span>
+                    )}
                     <span className="tabular text-[12px] text-ink-3">
                       {t('meeting.talkTime', { time: fmtClock(talk), count: lines.length })}
                     </span>
@@ -271,6 +287,8 @@ export function MeetingView({ id: rawId, onBack }: { id: string; onBack: () => v
                         />
                       </label>
                     ) : null}
+                  </div>
+                  {unnamed.includes(label) && <NameChips meeting={meeting} label={label} userName={userName} onDone={load} className="mt-2 ps-6" />}
                   </div>
                 )
               })}

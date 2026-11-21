@@ -2,7 +2,7 @@
 // Run with `npm run test:detector` (Node's own test runner and fake timers, no extra packages).
 import { afterEach, mock, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Detector, needsConfirmation, type Candidate } from '../src/main/meetings/detector.ts'
+import { Detector, appleCallSource, needsConfirmation, type Candidate } from '../src/main/meetings/detector.ts'
 
 type Tabs = Record<string, { url: string; title: string }[]>
 type Ev = { type: 'start'; key: string; source: string; at: number; cand: Candidate } | { type: 'end'; key: string; at: number }
@@ -162,6 +162,87 @@ test('a source switched off in settings does not start', () => {
   h.mic(['us.zoom.xos'])
   h.wait(60_000)
   assert.deepEqual(h.events, [])
+})
+
+// ---------------------------------------------------------------- Apple calls: iPhone calls on the Mac (Continuity), FaceTime
+
+// The helper reports CoreAudio's process list: the bundle ID of whichever process holds the mic, and
+// (for daemons, which have no app name) the bundle ID as the name. Which process that is during an
+// Apple call depends on the macOS version, so each of them is checked alone and in combination.
+const PHONE_APP = 'com.apple.mobilephone' // Phone.app, macOS 26+ (/System/Applications/Phone.app)
+const CALL_AUDIO = 'com.apple.avconferenced' // /usr/libexec/avconferenced
+const CALL_SERVICES = 'com.apple.TelephonyUtilities' // callservicesd's bundle ID
+const FACETIME = 'com.apple.FaceTime'
+
+for (const [what, bundles] of [
+  ['the Phone app', [PHONE_APP]],
+  ['only the call audio daemon (avconferenced)', [CALL_AUDIO]],
+  ['callservicesd', [CALL_SERVICES]],
+  ['the Phone app + avconferenced', [PHONE_APP, CALL_AUDIO]],
+  ['Phone + FaceTime + avconferenced (FaceTime shows the call on older macOS)', [FACETIME, CALL_AUDIO, PHONE_APP]]
+] as const) {
+  test(`iPhone call on the Mac via ${what}: a phone call, records by itself after 3 s`, () => {
+    const { cand } = callCycle({ bundles: [...bundles], key: 'app:apple', source: 'phone', startWithinMs: [3000, 4000] })
+    assert.equal(cand.appName, 'Phone')
+    assert.equal(cand.title, undefined, 'no contact name: the helper reports no window titles for apps')
+    assert.equal(needsConfirmation(cand), false)
+  })
+}
+
+test('FaceTime call (FaceTime + avconferenced): one call, a FaceTime call', () => {
+  const { cand } = callCycle({ bundles: [FACETIME, CALL_AUDIO], key: 'app:apple', source: 'facetime', startWithinMs: [3000, 4000] })
+  assert.equal(cand.appName, 'FaceTime')
+})
+
+test('FaceTime app alone on the mic: a FaceTime call', () => {
+  callCycle({ bundles: [FACETIME], key: 'app:apple', source: 'facetime', startWithinMs: [3000, 4000] })
+})
+
+test('Apple call: another call process joining or leaving mid-call is the same call (no split)', () => {
+  const h = harness()
+  h.mic([CALL_AUDIO])
+  h.wait(10_000)
+  h.mic([CALL_AUDIO, PHONE_APP])
+  h.wait(10_000)
+  h.mic([PHONE_APP])
+  h.wait(10_000)
+  h.mic([CALL_SERVICES])
+  h.wait(30_000)
+  assert.equal(h.starts().length, 1)
+  assert.equal(h.ends().length, 0)
+  h.mic([])
+  h.wait(16_000)
+  assert.deepEqual(h.ends().map((e) => e.key), ['app:apple'])
+})
+
+test('phone calls switched off in settings: not recorded; FaceTime still is', () => {
+  const h = harness((s) => s !== 'phone')
+  h.mic([CALL_AUDIO])
+  h.wait(60_000)
+  assert.deepEqual(h.events, [])
+  h.mic([FACETIME, CALL_AUDIO])
+  h.wait(10_000)
+  assert.deepEqual(h.starts().map((s) => s.source), ['facetime'])
+})
+
+test('Apple call processes are never an "unknown app" (no "click to record" question)', () => {
+  const h = harness()
+  h.mic([CALL_AUDIO])
+  h.wait(30_000)
+  assert.ok(h.starts().every((s) => !s.key.includes('unknown')))
+})
+
+test('appleCallSource: the strongest evidence names the call', () => {
+  assert.equal(appleCallSource([CALL_AUDIO]), 'phone')
+  assert.equal(appleCallSource([CALL_AUDIO, FACETIME]), 'facetime')
+  assert.equal(appleCallSource([FACETIME, PHONE_APP]), 'phone')
+  assert.equal(appleCallSource(['com.apple.telephonyutilities.callservicesd']), 'phone')
+  assert.equal(appleCallSource(['us.zoom.xos', 'com.apple.CoreSpeech']), null)
+})
+
+test('Windows Phone Link call: a phone call', () => {
+  const { cand } = callCycle({ bundles: ['phoneexperiencehost.exe'], key: 'app:phonelink', source: 'phone', startWithinMs: [3000, 4000] })
+  assert.equal(needsConfirmation(cand), false)
 })
 
 // ---------------------------------------------------------------- browsers

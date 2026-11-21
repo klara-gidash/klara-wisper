@@ -11,7 +11,7 @@ import { helper } from '../helper'
 import { settings } from '../settings'
 import { createMeetingFolder, writeMeeting, writeMeta } from '../storage/files'
 import { finalizer, type FinalizeJob } from './finalize'
-import { isGenericTitle } from './titles'
+import { isGenericTitle, phoneCallTitle } from './titles'
 import { broadcast, showLive } from '../windows'
 
 export interface StartOptions {
@@ -28,8 +28,9 @@ const BYTES_PER_SECOND = 32000
 /** App names used in default titles ("Google Meet 10:30"): such a title gives way to the calendar's. */
 export const TITLE_LABELS = Object.values(SOURCE_LABEL)
 
-export function defaultTitle(source: MeetingSource, at: Date): string {
+export function defaultTitle(source: MeetingSource, at: Date, contact?: string): string {
   const time = at.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+  if (source === 'phone') return phoneCallTitle(settings.value.uiLanguage === 'en' ? 'en' : 'he', time, contact)
   return source === 'inperson' ? `פגישה ${time}` : `${SOURCE_LABEL[source]} ${time}`
 }
 
@@ -99,7 +100,8 @@ class Recorder extends EventEmitter {
     const startedAt = new Date()
     // The calendar lookup can take a while (a Google fetch): the microphone opens first, the
     // event's title and attendees are applied when it answers (matchCalendar).
-    const title = opts.title || defaultTitle(opts.source, startedAt)
+    // A phone call is "שיחת טלפון" (with the contact, when the call app names it), not just the contact.
+    const title = opts.source === 'phone' && opts.mode === 'meeting' ? defaultTitle('phone', startedAt, opts.title) : opts.title || defaultTitle(opts.source, startedAt)
     const folder = createMeetingFolder({ startedAt: startedAt.toISOString(), source: opts.source, title })
     const id = `m_${startedAt.getTime().toString(36)}${Math.random().toString(36).slice(2, 6)}`
     const streams: Stream[] = opts.mode === 'meeting' ? ['mic', 'system'] : ['mic']

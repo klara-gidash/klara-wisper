@@ -4,8 +4,21 @@
 const GENERIC = new Set([
   'meet', 'google meet', 'zoom', 'zoom meeting', 'zoom workplace', 'zoom webinar', 'chat', 'google chat',
   'microsoft teams', 'teams', 'meeting', 'call', 'slack', 'huddle', 'slack huddle', 'webex', 'gmail',
-  'whatsapp', 'telegram', 'discord', 'signal', 'messenger', 'facetime', 'aircall', 'goto', 'goto meeting'
+  'whatsapp', 'telegram', 'discord', 'signal', 'messenger', 'facetime', 'aircall', 'goto', 'goto meeting',
+  'phone', 'phone call', 'שיחת טלפון', 'phone link'
 ])
+
+/**
+ * The title of a phone call (an iPhone call answered on the Mac, Phone Link on Windows): "שיחת טלפון"
+ * with the contact's name when the call app tells it, else with the time, like other calls.
+ */
+export function phoneCallTitle(lang: 'he' | 'en', time: string, contact?: string | null): string {
+  const who = (contact ?? '').replace(/[‎‏‪-‮⁦-⁩]/g, '').trim()
+  // A number or the app's own name is not a contact name.
+  const named = who && !GENERIC.has(who.toLowerCase()) && !/^[+\d\s()\-.]+$/.test(who) ? who : ''
+  if (lang === 'he') return named ? `שיחת טלפון עם ${named}` : `שיחת טלפון ${time}`
+  return named ? `Phone call with ${named}` : `Phone call ${time}`
+}
 
 const MEET_CODE = /^(?:meet\s*[-–—:]\s*)?[a-z]{3}-[a-z]{4}-[a-z]{3}$/i
 const DEFAULT_TIME = /^(.+?)\s+\d{1,2}:\d{2}$/

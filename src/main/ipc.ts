@@ -29,6 +29,7 @@ import { cloudLinks, deployCloud, forgetApiToken, fullCloudState, rotatePhoneLin
 import { pullPhoneRecordings } from './phoneRecordings'
 import { disableObsidian, enableObsidian, exportAllObsidian, obsidianState, pickObsidianVault } from './obsidian'
 import { autoSummary } from './summarize'
+import { dismissSpeakerPrompt, nameSpeaker, undoAutoSpeaker } from './speakerNaming'
 import { db } from './storage/db'
 import { readMeeting, renameMeetingFolder, writeMeeting, writeMeta } from './storage/files'
 import { broadcast, hideLive, showLibrary, showLive } from './windows'
@@ -279,19 +280,12 @@ export function registerIpc(detector: Detector): void {
     meta.folder = renameMeetingFolder(old, meta)
     saveMeta(meta)
   })
-  handle('meetings:renameSpeaker', (id: string, label: string, name: string, remember: boolean) => {
-    const m = readMeeting(meetingFolder(id))
-    if (!m) return
-    const info = { ...(m.meta.speakers[label] ?? { isMe: false }), name }
-    m.meta.speakers = { ...m.meta.speakers, [label]: info }
-    saveMeta(m.meta)
-    if (remember && info.embedding?.length) {
-      const key = info.key || `v_${Date.now().toString(36)}`
-      engine.send({ type: 'voiceprint.remember', key, name, embedding: info.embedding, isMe: info.isMe })
-      m.meta.speakers[label] = { ...info, key }
-      saveMeta(m.meta)
-    }
-  })
+  // Typed in the speakers tab, or a calendar name chip (remember = true: name + voiceprint in one step).
+  handle('meetings:renameSpeaker', (id: string, label: string, name: string, remember: boolean) =>
+    nameSpeaker(meetingFolder(id), String(label), String(name ?? ''), remember === true)
+  )
+  handle('meetings:undoAutoSpeaker', (id: string, label: string) => undoAutoSpeaker(meetingFolder(id), String(label)))
+  handle('meetings:dismissSpeakerPrompt', (id: string) => dismissSpeakerPrompt(meetingFolder(id)))
   handle('meetings:delete', async (id: string) => {
     const folder = meetingFolder(id)
     await shell.trashItem(folder)
