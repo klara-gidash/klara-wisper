@@ -897,6 +897,10 @@ test("the recording page: self-contained, strict CSP, Hebrew and English, instal
   assert.match(csp, /frame-ancestors 'none'/);
   assert.doesNotMatch(csp, /unsafe-inline|unsafe-eval|https?:/);
   assert.match(r.res.headers.get("Permissions-Policy"), /microphone=\(self\)/);
+  // The recording tab holds a Web Lock, and a second tab skips recordings whose lock is held
+  // (scripts/cloud-sim/phone.mjs runs this in Chrome).
+  assert.match(r.text, /navigator\.locks\.request\('klara-rec-' \+ rec\.key/);
+  assert.match(r.text, /held\.indexOf\('klara-rec-' \+ r\.key\) < 0/);
   assert.equal(r.res.headers.get("Cache-Control"), "no-store");
   const html = r.text;
   // Nothing external: no http(s) URLs in src/href, and every script and style carries the nonce.
