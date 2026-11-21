@@ -167,6 +167,8 @@ export interface Settings {
   /** Optional: copy transcripts + summaries to the user's own Cloudflare Worker (phone connector). */
   cloudSync: boolean
   cloudUrl: string
+  /** Team cloud: share meetings with the team automatically (never by default; src/shared/team.ts). */
+  teamAutoShare: { mode: 'never' | 'domains' | 'all'; domains: string[]; since: string | null }
   /** Optional: one Markdown note per call in an Obsidian vault (folder picked in Settings). */
   obsidianEnabled: boolean
   obsidianVault: string

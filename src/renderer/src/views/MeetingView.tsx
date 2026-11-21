@@ -47,8 +47,25 @@ export function MeetingView({ id: rawId, onBack }: { id: string; onBack: () => v
   const [time, setTime] = useState(0)
   const [rate, setRate] = useState(1)
 
-  const load = (): void => void invoke<Meeting>('meetings:get', id).then(setMeeting)
+  // Team cloud only: is this meeting shared with the team (off unless the user or the automatic rule said so).
+  const [share, setShare] = useState<{ inTeam: boolean; shared: boolean } | null>(null)
+  const load = (): void => {
+    void invoke<Meeting>('meetings:get', id).then(setMeeting)
+    void invoke<{ inTeam: boolean; shared: boolean }>('meetings:share', id).then(setShare).catch(() => setShare(null))
+  }
   useEffect(load, [id])
+  const changeShare = (shared: boolean): void => {
+    setShare({ inTeam: true, shared })
+    void invoke<{ shared: boolean; synced: boolean }>('meetings:setShare', id, shared)
+      .then((r) => {
+        setShare({ inTeam: true, shared: r.shared })
+        if (!r.synced) flash(t('team.sharePending'))
+      })
+      .catch(() => {
+        setShare({ inTeam: true, shared: !shared })
+        flash(t('team.shareFailed'))
+      })
+  }
   useEvent<string | null>('meetings:changed', (changed) => (!changed || changed === id) && load())
 
   const flash = (msg: string): void => {
@@ -172,6 +189,13 @@ export function MeetingView({ id: rawId, onBack }: { id: string; onBack: () => v
               </div>
             ) : null}
             {meta.scope && <div className="mt-1.5 max-w-[60ch] text-[13px] leading-relaxed text-ink-2">{meta.scope}</div>}
+            {share?.inTeam && meta.status === 'done' && (
+              <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12.5px]">
+                <Toggle checked={share.shared} onChange={changeShare} />
+                <span className="font-medium">{t('team.shareToggle')}</span>
+                <span className="text-ink-3">{share.shared ? t('team.shareOn') : t('team.shareOff')}</span>
+              </div>
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <Button size="sm" icon={<Sparkles size={13} />} onClick={() => void askClaude()}>{t('meeting.askClaude')}</Button>

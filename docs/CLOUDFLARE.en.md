@@ -86,6 +86,35 @@ Tips:
 - "Which tasks are still open from this week's meetings?"
 - "Can I get a short summary of the last call?"
 
+## Team cloud (optional)
+
+One cloud can also serve a team. Whoever set up the cloud is its **owner**, and invites teammates. Each teammate uses Klara Wisper on their own computer, with their own keys, and their calls upload to the same cloud. **Sharing is off by default**: nobody sees anyone else's calls unless they choose to share one.
+
+**Who sees what:**
+
+- **Your own connector** (the one in Settings → Cloud) sees only **your** calls, shared or not. That's true for the owner too.
+- **The team connector** sees **only calls someone shared with the team**, and says who shared each one. A call that wasn't shared never shows up there, not in a list, not in a search.
+- **Phone recordings:** each person gets their own recording link, and their recordings go only to their own computer.
+- **Honestly:** the cloud is in the owner's Cloudflare account. The owner can't see unshared calls in Klara Wisper or in Claude, but whoever manages that Cloudflare account can technically open the database in the Cloudflare dashboard. Tell your team, and only use a team cloud with people who trust the owner.
+
+**For the owner:**
+
+1. Set up the cloud as usual (automatic setup). If it was set up before this version, click **"Update the Worker"** first. Your calls and links keep working as they are.
+2. **Settings** → **Cloud** (“Claude on your phone”) → **Team**. Type your name (it is shown next to calls you share).
+3. **Invite a teammate**: type their name and click **"Create invite"**. Copy the invite (it starts with `klara-team:`) and send it in a **private** message. It works once, for 7 days. Their keys are created only on their computer when they join: you never see them.
+4. **Team connector**: click **"Create a team connector"** and copy the link. It is shown only once. Add it in claude.ai like your own connector (see "In claude.ai"), and give it to whoever should be able to ask Claude about the team's shared calls. You can make one per person and delete each one separately. Unlike your own connector, it's fine for an organization's admins to add this one for everyone, as long as everyone is meant to see what the team shares.
+5. In the teammates list you see who joined, how many calls each one has and how many are shared (never their content). **New invite** is for a new computer: once used, their old computer stops connecting. **Remove** stops their keys at once and deletes their unshared calls and phone recordings from the cloud. Tick the box to also delete the calls they shared; otherwise those stay on the team connector, marked "no longer in the team".
+
+**For a teammate:**
+
+1. In Klara Wisper: **Settings** → **Cloud** (“Claude on your phone”) → **"Join a team cloud"**, paste the invite, and click **"Join"**. If this computer already had its own cloud, joining replaces that connection.
+2. Your calls sync to the team cloud, but stay unshared until you choose. In a call's page, turn on **"Share with the team"** to share it, and turn it off to take it back (it disappears from the team connector at once).
+3. Optionally, **"Share with the team automatically"**: **never** (the default), **calls with guests from these domains** (for example a customer's `acme.com`), or **all calls**. It only applies to calls from the moment you set it, never to older ones, and you can still change each call by hand.
+4. Your own connector and recording link appear in Settings → Cloud as usual. They are yours only.
+5. **Leave the team** disconnects your computer. The owner removes you from the list to delete your data from the cloud.
+
+**Limits:** up to 50 teammates and 20 team connectors. Each teammate has room for about 100 MB of calls and 150 MB of recordings waiting to be transcribed (the owner can change this with the `KLARA_MEMBER_QUOTA_MB` and `KLARA_MEMBER_REC_QUOTA_MB` variables on the Worker). The free Cloudflare plan allows 500 MB per database, which fits a small team.
+
 ## Replacing a token
 
 Replace a token if you think it leaked, and now and then anyway. **The easy way:** Klara Wisper → **Settings** → **Cloud** has buttons to replace the connector URL and the recording link. The steps below are the manual way.

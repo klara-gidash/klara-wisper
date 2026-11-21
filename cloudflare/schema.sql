@@ -13,7 +13,11 @@ CREATE TABLE IF NOT EXISTS meetings (
   calendar_title TEXT,
   transcript     TEXT NOT NULL DEFAULT '',   -- Markdown
   summary        TEXT,                       -- Markdown, NULL until written
-  updated_at     TEXT NOT NULL
+  updated_at     TEXT NOT NULL,
+  -- Team cloud (the Worker adds these three to an older table by itself):
+  uploaded_by    TEXT NOT NULL DEFAULT 'owner', -- 'owner' or a members.id: who uploaded it
+  shared         INTEGER NOT NULL DEFAULT 0,    -- 1 only when its uploader shared it with the team
+  row_bytes      INTEGER NOT NULL DEFAULT 0     -- UTF-8 bytes of the row's text, for the per-member limit
 );
 
 CREATE INDEX IF NOT EXISTS idx_meetings_started_at ON meetings (started_at);
@@ -35,7 +39,8 @@ CREATE TABLE IF NOT EXISTS recordings (
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL,
   finished_at  TEXT,
-  claimed_at   TEXT
+  claimed_at   TEXT,
+  member_id    TEXT NOT NULL DEFAULT 'owner'      -- whose phone link made it: 'owner' or a members.id
 );
 
 CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings (status, started_at);
@@ -51,3 +56,30 @@ CREATE TABLE IF NOT EXISTS recording_chunks (
 -- When old recordings were last cleaned up (ms since 1970), so the cleanup runs at most once an hour.
 CREATE TABLE IF NOT EXISTS recording_meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
 INSERT OR IGNORE INTO recording_meta (key, value) VALUES ('cleanup', 0);
+
+-- Team cloud (optional): members the owner invited, team connectors, and the owner's display name.
+-- Tokens and invite codes are stored only as SHA-256 hashes. The Worker creates these tables by itself too, and the
+-- indexes on the team columns above (uploaded_by, shared, member_id): this file runs again on every update, when an
+-- older table may not have those columns yet, so it never indexes them.
+CREATE TABLE IF NOT EXISTS members (
+  id                TEXT PRIMARY KEY,  -- u_ + random
+  name              TEXT NOT NULL,     -- shown on the team connector next to the meetings they share
+  upload_hash       TEXT UNIQUE,       -- NULL until they join, and after they are removed
+  mcp_hash          TEXT UNIQUE,
+  rec_hash          TEXT UNIQUE,
+  invite_hash       TEXT UNIQUE,       -- the one-time invite code, until it is used
+  invite_expires_at TEXT,
+  created_at        TEXT NOT NULL,
+  joined_at         TEXT,
+  last_seen_at      TEXT,
+  removed_at        TEXT               -- kept only while their shared meetings stay
+);
+
+CREATE TABLE IF NOT EXISTS team_connectors (
+  id         TEXT PRIMARY KEY,         -- t_ + random
+  label      TEXT NOT NULL DEFAULT '',
+  token_hash TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS team_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);

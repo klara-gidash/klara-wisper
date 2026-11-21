@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Simulates the optional Cloudflare pieces end to end, without a Cloudflare account (scripts/cloud-sim/README.md).
 #   bash scripts/cloud-sim/run.sh            # everything
-#   bash scripts/cloud-sim/run.sh routes     # or: deploy, phone, pull
+#   bash scripts/cloud-sim/run.sh routes     # or: team, deploy, phone, pull
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.local/node/bin:$PATH"
@@ -31,8 +31,8 @@ run() {
 }
 
 case "${1:-all}" in
-  all) for s in routes deploy phone pull; do run "$s"; done ;;
-  routes|deploy|phone|pull) run "$1" ;;
-  *) echo "usage: $0 [all|routes|deploy|phone|pull]" >&2; exit 2 ;;
+  all) for s in routes team deploy phone pull; do run "$s"; done ;;
+  routes|team|deploy|phone|pull) run "$1" ;;
+  *) echo "usage: $0 [all|routes|team|deploy|phone|pull]" >&2; exit 2 ;;
 esac
 exit $status

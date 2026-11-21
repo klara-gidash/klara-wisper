@@ -69,6 +69,16 @@ export function applySql(dir, sql) {
   return r.stdout;
 }
 
+/** Rows of one SQL query on a project's local D1 (run while `wrangler dev` for it is stopped). */
+export function querySql(dir, sql) {
+  const r = spawnSync(WRANGLER, ["d1", "execute", "klara-wisper", "--local", "--persist-to", join(dir, "state"), "--command", sql, "--json"], {
+    cwd: dir, encoding: "utf8", env: wranglerEnv(),
+  });
+  if (r.status !== 0) throw new Error(`d1 execute failed: ${r.stderr || r.stdout}`);
+  const out = JSON.parse(r.stdout);
+  return (Array.isArray(out) ? out[0] : out).results;
+}
+
 /** Starts `wrangler dev` for a project folder; resolves with {url, stop()} once /api/health answers. */
 export async function startWorker(dir, { port, log = false } = {}) {
   port ??= await freePort();

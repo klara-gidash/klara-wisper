@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { inflateSync } from "node:zlib";
 import worker from "../src/worker.js";
@@ -145,8 +145,8 @@ test("health needs no auth and sends security headers but no CORS", async () => 
   assert.equal(status, 200);
   assert.equal(data.ok, true);
   assert.match(data.version, /^\d+\.\d+\.\d+$/);
-  assert.equal(data.version, "1.1.0");
-  assert.deepEqual(data.features, ["meetings", "mcp", "recordings"]);
+  assert.equal(data.version, "1.2.0");
+  assert.deepEqual(data.features, ["meetings", "mcp", "recordings", "team"]);
   assert.equal(res.headers.get("X-Content-Type-Options"), "nosniff");
   assert.equal(res.headers.get("Cache-Control"), "no-store");
   assert.ok(res.headers.get("Content-Security-Policy"));
@@ -780,12 +780,15 @@ test("an older database gets the recording tables created on first use", async (
   assert.equal((await api(e, "GET", "/api/recordings")).data.recordings.length, 1);
   assert.match((await tool(e, "list_meetings")).text, /m_acme1/);
 
-  // The tables the Worker creates are the same as in schema.sql.
+  // The tables the Worker creates are the same as in schema.sql (the indexes on the team columns are always the
+  // Worker's: schema.sql runs again on updates, over tables that don't have those columns yet).
   const fresh = new FakeD1();
+  await recStart(env({ DB: fresh }));
+  await upload(env({ DB: fresh }), meeting());
   const shape = (db) =>
-    ["recordings", "recording_chunks", "recording_meta"].map((t) =>
+    ["meetings", "recordings", "recording_chunks", "recording_meta", "members", "team_connectors", "team_settings"].map((t) =>
       JSON.stringify([t, db.prepare(`PRAGMA table_info(${t})`).all().map((c) => ({ ...c }))]))
-      .concat(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_recordings%' ORDER BY name").all().map((x) => x.name));
+      .concat(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%' ORDER BY name").all().map((x) => x.name));
   assert.deepEqual(shape(d.db), shape(fresh.db));
 });
 
@@ -957,6 +960,436 @@ test("the recording page: self-contained, strict CSP, Hebrew and English, instal
     assert.ok(raw.some((x) => x !== 0)); // the dot is drawn
   }
   assert.equal((await call(e, "GET", `${REC}/icon-64.png`)).status, 404);
+});
+
+// ---------- team cloud ----------
+
+// Every member token and invite code a test sees, so the log check at the end can look for them.
+const teamSecrets = [];
+const TEAM_PING = { jsonrpc: "2.0", id: 1, method: "ping" };
+const owner = (e, method, path, opts = {}) => call(e, method, path, { token: e.KLARA_TOKEN, ...opts });
+
+/** Invites `name` as the owner and joins with the code: the member's id and three tokens. */
+async function addMember(e, name) {
+  const inv = await owner(e, "POST", "/api/team/members", { body: { name } });
+  assert.equal(inv.status, 200, JSON.stringify(inv.data));
+  assert.match(inv.data.invite.code, /^[0-9a-f]{64}$/);
+  teamSecrets.push(inv.data.invite.code);
+  const joined = await call(e, "POST", "/api/team/join", { body: { code: inv.data.invite.code } });
+  assert.equal(joined.status, 200, JSON.stringify(joined.data));
+  const { tokens, member } = joined.data;
+  for (const t of Object.values(tokens)) {
+    assert.match(t, /^[0-9a-f]{64}$/);
+    teamSecrets.push(t);
+  }
+  assert.equal(new Set(Object.values(tokens)).size, 3, "three different tokens");
+  return { id: member.id, name: member.name, code: inv.data.invite.code, ...tokens };
+}
+
+async function teamConnector(e, label = "team") {
+  const r = await owner(e, "POST", "/api/team/connectors", { body: { label } });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  teamSecrets.push(r.data.token);
+  return { id: r.data.connector.id, token: r.data.token };
+}
+
+/** A tool call through any connector token. */
+async function toolAs(e, token, name, args = {}) {
+  const r = await call(e, "POST", `/mcp/${token}`, { body: { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name, arguments: args } } });
+  assert.equal(r.status, 200, `${name} via connector: ${r.status}`);
+  return { text: r.data.result.content[0].text, isError: r.data.result.isError === true };
+}
+
+/** Owner and two members, each with a shared and an unshared meeting (all four ids the same between people). */
+async function teamWorld(over = {}) {
+  const e = env(over);
+  assert.equal((await owner(e, "PUT", "/api/team", { body: { ownerName: "קלרה" } })).status, 200);
+  const a = await addMember(e, "דנה");
+  const b = await addMember(e, "Yossi");
+  const team = await teamConnector(e);
+  const put = async (token, id, word, shared) =>
+    assert.equal(
+      (await upload(e, meeting({ id, title: `פגישה ${word}`, transcript: `דובר 1 [00:01]:\nהמילה היא ${word}\n`, summary: `## תקציר\n${word}\n`, shared }), token)).status,
+      200,
+    );
+  await put(e.KLARA_TOKEN, "m_shared", "ownersharedword", true);
+  await put(e.KLARA_TOKEN, "m_private", "ownerprivateword", undefined);
+  await put(a.upload, "m_shared", "danasharedword", true);
+  await put(a.upload, "m_private", "danaprivateword", false);
+  await put(b.upload, "m_shared", "yossisharedword", true);
+  await put(b.upload, "m_private", "yossiprivateword", undefined);
+  return { e, a, b, team };
+}
+
+const ALL_WORDS = ["ownersharedword", "ownerprivateword", "danasharedword", "danaprivateword", "yossisharedword", "yossiprivateword"];
+
+/** Everything a connector can find, through every tool. */
+async function visibleWords(e, token) {
+  const texts = [
+    (await toolAs(e, token, "list_meetings", { days: 3650, limit: 100 })).text,
+    (await toolAs(e, token, "daily_digest", {})).text,
+    (await toolAs(e, token, "get_meeting", { id: "latest" })).text,
+  ];
+  for (const w of ALL_WORDS) {
+    const found = (await toolAs(e, token, "search_meetings", { query: w })).text;
+    if (!found.startsWith("No meetings contain")) texts.push(found); // that answer repeats the query
+  }
+  for (const id of ["m_shared", "m_private"]) texts.push((await toolAs(e, token, "get_meeting", { id })).text);
+  const all = texts.join("\n");
+  return ALL_WORDS.filter((w) => all.includes(w));
+}
+
+test("team: a Worker without members works exactly like a personal one", async () => {
+  const e = env();
+  assert.equal((await upload(e, meeting())).status, 200);
+  const me = await owner(e, "GET", "/api/me");
+  assert.deepEqual(me.data, { ok: true, role: "owner", id: "owner", name: "", ownerName: "", team: { members: 0, connectors: 0 } });
+  const list = await tool(e, "list_meetings");
+  assert.match(list.text, /id: m_acme1/);
+  assert.doesNotMatch(list.text, /shared/);
+  const got = await tool(e, "get_meeting", { id: "m_acme1" });
+  assert.match(got.text, /חידוש החוזה/);
+  assert.doesNotMatch(got.text, /shared/);
+  const row = e.DB.db.prepare("SELECT uploaded_by, shared, row_bytes FROM meetings WHERE id = 'm_acme1'").get();
+  assert.deepEqual({ ...row, row_bytes: row.row_bytes > 100 }, { uploaded_by: "owner", shared: 0, row_bytes: true });
+  // Delete-all by the owner still empties a personal Worker.
+  assert.equal((await owner(e, "DELETE", "/api/meetings", { body: { all: true } })).data.deleted, 1);
+});
+
+test("team: invite, join once, tokens stored only as hashes, the owner's list never shows tokens", async () => {
+  const e = env();
+  const a = await addMember(e, "  דנה   כהן ");
+  assert.equal(a.name, "דנה כהן");
+  assert.match(a.id, /^u_[0-9a-f]{16}$/);
+  // The code works once.
+  const again = await call(e, "POST", "/api/team/join", { body: { code: a.code } });
+  assert.equal(again.status, 404);
+  assert.match(again.data.error, /already used|expired/);
+  // D1 has no token or code in plain text: only their SHA-256.
+  const rows = JSON.stringify(e.DB.db.prepare("SELECT * FROM members").all());
+  for (const secret of [a.code, a.upload, a.mcp, a.rec]) assert.equal(rows.includes(secret), false);
+  const sha = (s) => createHash("sha256").update(s).digest("hex");
+  const row = e.DB.db.prepare("SELECT upload_hash, mcp_hash, rec_hash, invite_hash FROM members WHERE id = ?").get(a.id);
+  assert.deepEqual({ ...row }, { upload_hash: sha(a.upload), mcp_hash: sha(a.mcp), rec_hash: sha(a.rec), invite_hash: null });
+
+  const me = await call(e, "GET", "/api/me", { token: a.upload });
+  assert.equal(me.data.role, "member");
+  assert.equal(me.data.name, "דנה כהן");
+  assert.equal(me.data.id, a.id);
+  const info = await owner(e, "GET", "/api/team");
+  assert.equal(info.status, 200);
+  assert.equal(info.data.members.length, 1);
+  assert.equal(info.data.members[0].status, "joined");
+  const text = JSON.stringify(info.data);
+  for (const secret of [a.code, a.upload, a.mcp, a.rec, sha(a.upload), sha(a.mcp)]) assert.equal(text.includes(secret), false);
+  assert.equal((await owner(e, "GET", "/api/me")).data.team.members, 1);
+
+  // Bad and unknown codes.
+  assert.equal((await call(e, "POST", "/api/team/join", { body: {} })).status, 400);
+  assert.equal((await call(e, "POST", "/api/team/join", { body: { code: "x".repeat(64) } })).status, 400);
+  assert.equal((await call(e, "POST", "/api/team/join", { body: { code: "a".repeat(64) } })).status, 404);
+  assert.equal((await call(e, "GET", "/api/team/join")).status, 405);
+  // An expired invite.
+  const late = await owner(e, "POST", "/api/team/members", { body: { name: "Late" } });
+  e.DB.db.prepare("UPDATE members SET invite_expires_at = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), late.data.member.id);
+  assert.equal((await call(e, "POST", "/api/team/join", { body: { code: late.data.invite.code } })).status, 404);
+  assert.equal((await owner(e, "GET", "/api/team")).data.members.find((m) => m.name === "Late").status, "expired");
+});
+
+test("team: each connector sees only what it may (own meetings; the team connector only shared ones)", async () => {
+  const { e, a, b, team } = await teamWorld();
+  assert.deepEqual(await visibleWords(e, e.KLARA_MCP_TOKEN), ["ownersharedword", "ownerprivateword"]);
+  assert.deepEqual(await visibleWords(e, a.mcp), ["danasharedword", "danaprivateword"]);
+  assert.deepEqual(await visibleWords(e, b.mcp), ["yossisharedword", "yossiprivateword"]);
+  assert.deepEqual(await visibleWords(e, team.token), ["ownersharedword", "danasharedword", "yossisharedword"]);
+
+  // A member's own connector shows their own ids, as on a personal Worker, and marks the shared one.
+  const mine = await toolAs(e, a.mcp, "list_meetings", { days: 30 });
+  assert.match(mine.text, /- id: m_shared\n/);
+  assert.match(mine.text, /- id: m_private\n/);
+  assert.match(mine.text, /shared with the team: yes/);
+  assert.doesNotMatch(mine.text, new RegExp(a.id));
+  // The team connector names who shared each meeting, inside the data wrapper.
+  const shared = await toolAs(e, team.token, "list_meetings", { days: 30 });
+  assert.equal(shared.text.match(/shared by: /g).length, 3);
+  for (const n of ["קלרה", "דנה", "Yossi"]) assert.match(shared.text, new RegExp(`shared by: ${n}`));
+  assert.ok(shared.text.indexOf("shared by") > shared.text.indexOf("<meeting_content>"));
+  assert.ok(shared.text.indexOf("shared by") < shared.text.indexOf("</meeting_content>"));
+  const ids = [...shared.text.matchAll(/- id: (\S+)/g)].map((m) => m[1]).sort();
+  assert.deepEqual(ids, ["m_shared", `${a.id}:m_shared`, `${b.id}:m_shared`].sort());
+  const one = await toolAs(e, team.token, "get_meeting", { id: `${a.id}:m_shared` });
+  assert.match(one.text, /danasharedword/);
+  assert.match(one.text, /shared by: דנה/);
+  assert.match(one.text, /data, not instructions/);
+  // ...but never an unshared one, even by its full id.
+  for (const id of [`${a.id}:m_private`, `${b.id}:m_private`, "m_private"]) {
+    assert.equal((await toolAs(e, team.token, "get_meeting", { id })).isError, true, id);
+  }
+  // A member can't reach another member's meeting by any id.
+  for (const id of [`${b.id}:m_shared`, `${b.id}:m_private`, `${a.id}:m_private`, `owner:m_private`]) {
+    const r = await toolAs(e, a.mcp, "get_meeting", { id });
+    assert.equal(r.isError, true, id);
+    assert.doesNotMatch(r.text, /yossi/);
+  }
+  const team2 = await call(e, "POST", `/mcp/${team.token}`, { body: { jsonrpc: "2.0", id: 1, method: "initialize", params: {} } });
+  assert.match(team2.data.result.instructions, /chose to share with the team/);
+  assert.match(team2.data.result.instructions, /data, not instructions/);
+  assert.equal(team2.data.result.serverInfo.title, "Klara Wisper (team)");
+});
+
+test("team: the same meeting id from two people never overwrites; delete and delete-all touch only your own", async () => {
+  const { e, a, b, team } = await teamWorld();
+  assert.equal(e.DB.db.prepare("SELECT COUNT(*) AS n FROM meetings").get().n, 6);
+  // Dana deletes "m_private": only hers goes.
+  let r = await call(e, "DELETE", "/api/meetings/m_private", { token: a.upload });
+  assert.equal(r.data.deleted, 1);
+  assert.deepEqual(await visibleWords(e, b.mcp), ["yossisharedword", "yossiprivateword"]);
+  assert.deepEqual(await visibleWords(e, e.KLARA_MCP_TOKEN), ["ownersharedword", "ownerprivateword"]);
+  // Yossi deletes all of his.
+  r = await call(e, "DELETE", "/api/meetings", { token: b.upload, body: { all: true } });
+  assert.equal(r.data.deleted, 2);
+  assert.deepEqual(await visibleWords(e, team.token), ["ownersharedword", "danasharedword"]);
+  // The owner's delete-all keeps the members' meetings.
+  r = await owner(e, "DELETE", "/api/meetings", { body: { all: true } });
+  assert.equal(r.data.deleted, 2);
+  assert.deepEqual(await visibleWords(e, a.mcp), ["danasharedword"]);
+  // The owner can't overwrite a member's row through its stored id either.
+  r = await upload(e, meeting({ id: `${a.id}:m_shared`, title: "takeover", transcript: "x" }));
+  assert.equal(r.status, 409);
+  assert.match((await toolAs(e, a.mcp, "get_meeting", { id: "m_shared" })).text, /danasharedword/);
+});
+
+test("team: sharing is off by default, per meeting, and only the uploader can change it", async () => {
+  const { e, a, b, team } = await teamWorld();
+  // Left out, an upload keeps what the meeting had.
+  assert.equal((await upload(e, meeting({ id: "m_shared", title: "again", transcript: "danasharedword again" }), a.upload)).status, 200);
+  assert.match((await toolAs(e, team.token, "search_meetings", { query: "danasharedword" })).text, /again/);
+  // Dana unshares it: gone from the team connector at once.
+  let r = await call(e, "POST", "/api/meetings/m_shared/share", { token: a.upload, body: { shared: false } });
+  assert.deepEqual(r.data, { ok: true, shared: false });
+  assert.deepEqual(await visibleWords(e, team.token), ["ownersharedword", "yossisharedword"]);
+  // Yossi can't share or unshare Dana's meetings, by her id or by the stored one.
+  for (const id of ["m_private", `${a.id}:m_private`, encodeURIComponent(`${a.id}:m_private`)]) {
+    r = await call(e, "POST", `/api/meetings/${id}/share`, { token: b.upload, body: { shared: true } });
+    assert.equal(r.status, id === "m_private" ? 200 : 404, id); // "m_private" is Yossi's own
+  }
+  assert.equal(e.DB.db.prepare("SELECT shared FROM meetings WHERE id = ?").get(`${a.id}:m_private`).shared, 0);
+  // Not uploaded yet: 404, so the app uploads it with the flag instead.
+  assert.equal((await call(e, "POST", "/api/meetings/m_none/share", { token: a.upload, body: { shared: true } })).status, 404);
+  // Validation.
+  assert.equal((await call(e, "POST", "/api/meetings/m_shared/share", { token: a.upload, body: { shared: "yes" } })).status, 400);
+  assert.equal((await call(e, "GET", "/api/meetings/m_shared/share", { token: a.upload })).status, 405);
+  assert.equal((await upload(e, meeting({ shared: "true" }), a.upload)).status, 400);
+  // Sharing via the upload body works too.
+  assert.equal((await upload(e, meeting({ id: "m_new", transcript: "brandnewword", shared: true }), a.upload)).status, 200);
+  assert.match((await toolAs(e, team.token, "search_meetings", { query: "brandnewword" })).text, /shared by: דנה/);
+});
+
+test("team: tokens are kept apart, and only the owner can manage the team", async () => {
+  const { e, a, team } = await teamWorld();
+  const unknown = await call(e, "GET", "/nothing-here");
+  // A member's upload token is refused on every admin route.
+  for (const [method, path, body] of [
+    ["GET", "/api/team"], ["PUT", "/api/team", { ownerName: "x" }], ["POST", "/api/team/members", { name: "x" }],
+    ["DELETE", `/api/team/members/${a.id}`, {}], ["POST", `/api/team/members/${a.id}/invite`, {}],
+    ["POST", "/api/team/connectors", { label: "x" }], ["DELETE", `/api/team/connectors/${team.id}`],
+  ]) {
+    const r = await call(e, method, path, { token: a.upload, body });
+    assert.equal(r.status, 403, `${method} ${path}`);
+    assert.match(r.data.error, /only the owner/);
+  }
+  // Read-only and phone tokens never work on /api; upload tokens never on /mcp or /rec.
+  for (const t of [a.mcp, a.rec, team.token]) {
+    assert.equal((await call(e, "GET", "/api/me", { token: t })).status, 401);
+    assert.equal((await upload(e, meeting(), t)).status, 401);
+    assert.equal((await call(e, "GET", "/api/recordings", { token: t })).status, 401);
+    assert.equal((await call(e, "GET", "/api/team", { token: t })).status, 401);
+  }
+  for (const t of [a.upload, a.rec]) {
+    const r = await call(e, "POST", `/mcp/${t}`, { body: TEAM_PING });
+    assert.equal(r.status, 404);
+    assert.equal(r.text, unknown.text);
+  }
+  for (const t of [a.upload, a.mcp, team.token]) {
+    const r = await call(e, "GET", `/rec/${t}`);
+    assert.equal(r.status, 404);
+    assert.equal(r.text, unknown.text);
+  }
+  // Their own tokens work where they belong.
+  assert.equal((await call(e, "POST", `/mcp/${a.mcp}`, { body: TEAM_PING })).status, 200);
+  assert.equal((await call(e, "POST", `/mcp/${team.token}`, { body: TEAM_PING })).status, 200);
+  assert.equal((await call(e, "GET", `/rec/${a.rec}`)).status, 200);
+  // Admin route shapes.
+  assert.equal((await owner(e, "DELETE", "/api/team/members/u_0000000000000000")).status, 404);
+  assert.equal((await owner(e, "DELETE", "/api/team/members/not-an-id")).status, 404);
+  assert.equal((await owner(e, "DELETE", "/api/team/connectors/t_0000000000000000")).status, 404);
+  assert.equal((await owner(e, "POST", "/api/team/members", { body: { name: "" } })).status, 400);
+  assert.equal((await owner(e, "POST", "/api/team/members", { body: { name: "x".repeat(201) } })).status, 400);
+  assert.equal((await owner(e, "GET", "/api/team/members")).status, 405);
+  assert.equal((await owner(e, "PATCH", "/api/team")).status, 405);
+  // A deleted team connector stops at once.
+  assert.equal((await owner(e, "DELETE", `/api/team/connectors/${team.id}`)).status, 200);
+  assert.equal((await call(e, "POST", `/mcp/${team.token}`, { body: TEAM_PING })).status, 404);
+});
+
+test("team: phone recordings belong to the member whose link made them; only their computer can pull them", async () => {
+  const { e, a, b } = await teamWorld();
+  const start = (t, over = {}) =>
+    call(e, "POST", `/rec/${t}/start`, { body: { title: "פגישה", kind: "inperson", mime: "audio/webm", startedAt: NOW, ...over } });
+  // The same page id from two phones makes two recordings.
+  const ra = await start(a.rec, { clientId: "samepageid-0001" });
+  const rb = await start(b.rec, { clientId: "samepageid-0001" });
+  const ro = await start(REC_TOKEN, { clientId: "samepageid-0001" });
+  assert.equal(new Set([ra.data.id, rb.data.id, ro.data.id]).size, 3);
+  assert.equal((await start(a.rec, { clientId: "samepageid-0001" })).data.id, ra.data.id); // a retry: same row
+  // Yossi's phone can't add to Dana's or the owner's recording.
+  assert.equal((await call(e, "POST", `/rec/${b.rec}/chunk?id=${ra.data.id}&seq=0`, { raw: bytesOf(10, 1) })).status, 404);
+  assert.equal((await call(e, "POST", `/rec/${a.rec}/chunk?id=${ro.data.id}&seq=0`, { raw: bytesOf(10, 1) })).status, 404);
+  assert.equal((await call(e, "POST", `/rec/${b.rec}/finish?id=${ra.data.id}`, { body: { chunks: 1, durationSec: 1 } })).status, 404);
+  for (const [t, r] of [[a.rec, ra], [b.rec, rb], [REC_TOKEN, ro]]) {
+    assert.equal((await call(e, "POST", `/rec/${t}/chunk?id=${r.data.id}&seq=0`, { raw: bytesOf(10, 7) })).status, 200);
+    assert.equal((await call(e, "POST", `/rec/${t}/finish?id=${r.data.id}`, { body: { chunks: 1, durationSec: 1 } })).status, 200);
+  }
+  // Each computer lists only its own.
+  const list = async (t) => (await call(e, "GET", "/api/recordings", { token: t })).data.recordings.map((x) => x.id);
+  assert.deepEqual(await list(a.upload), [ra.data.id]);
+  assert.deepEqual(await list(b.upload), [rb.data.id]);
+  assert.deepEqual(await list(TOKEN), [ro.data.id]);
+  // ...and can't claim, download, release or delete someone else's.
+  for (const t of [b.upload, TOKEN]) {
+    assert.equal((await call(e, "POST", `/api/recordings/${ra.data.id}/claim`, { token: t, body: {} })).status, 404);
+    assert.equal((await call(e, "GET", `/api/recordings/${ra.data.id}/audio`, { token: t })).status, 404);
+  }
+  assert.equal((await call(e, "POST", `/api/recordings/${ra.data.id}/claim`, { token: a.upload, body: {} })).status, 200);
+  assert.equal((await call(e, "POST", `/api/recordings/${ra.data.id}/release`, { token: b.upload, body: {} })).data.released, 0);
+  assert.equal((await call(e, "POST", `/api/recordings/${ra.data.id}/release`, { token: a.upload, body: {} })).data.released, 1);
+  assert.equal((await call(e, "DELETE", `/api/recordings/${ra.data.id}`, { token: b.upload })).data.deleted, 0);
+  assert.equal((await call(e, "DELETE", `/api/recordings/${ra.data.id}`, { token: TOKEN })).data.deleted, 0);
+  assert.equal(e.DB.db.prepare("SELECT COUNT(*) AS n FROM recording_chunks WHERE id = ?").get(ra.data.id).n, 1);
+  // Dana's computer claims, downloads and deletes hers.
+  assert.equal((await call(e, "POST", `/api/recordings/${ra.data.id}/claim`, { token: a.upload, body: {} })).status, 200);
+  const audio = await call(e, "GET", `/api/recordings/${ra.data.id}/audio`, { token: a.upload });
+  assert.deepEqual([...audio.bytes], [...bytesOf(10, 7)]);
+  assert.equal((await call(e, "DELETE", `/api/recordings/${ra.data.id}`, { token: a.upload })).data.deleted, 1);
+});
+
+test("team: per-member limits for meetings and phone audio; the owner's stay as before", async () => {
+  const e = env({ KLARA_MEMBER_QUOTA_MB: "0.002", KLARA_MEMBER_REC_QUOTA_MB: "0.0005" }); // 2,000 and 500 bytes
+  const a = await addMember(e, "דנה");
+  const big = "א".repeat(600); // 1,200 bytes
+  assert.equal((await upload(e, meeting({ id: "m_1", transcript: big, summary: null }), a.upload)).status, 200);
+  // Re-uploading the same meeting doesn't count it twice.
+  assert.equal((await upload(e, meeting({ id: "m_1", transcript: big, summary: null }), a.upload)).status, 200);
+  const full = await upload(e, meeting({ id: "m_2", transcript: big, summary: null }), a.upload);
+  assert.equal(full.status, 507);
+  assert.match(full.data.error, /space in the team cloud is full/);
+  // The owner has no per-member limit.
+  for (const id of ["o_1", "o_2", "o_3"]) assert.equal((await upload(e, meeting({ id, transcript: big }))).status, 200);
+  assert.equal((await owner(e, "GET", "/api/team")).data.members[0].bytes > 1200, true);
+  // Phone audio: 500 bytes for the member.
+  const s = await call(e, "POST", `/rec/${a.rec}/start`, { body: { kind: "inperson", mime: "audio/webm", startedAt: NOW } });
+  assert.equal((await call(e, "POST", `/rec/${a.rec}/chunk?id=${s.data.id}&seq=0`, { raw: bytesOf(400, 1) })).status, 200);
+  const over = await call(e, "POST", `/rec/${a.rec}/chunk?id=${s.data.id}&seq=1`, { raw: bytesOf(200, 1) });
+  assert.equal(over.status, 507);
+  assert.match(over.data.error, /Your space for phone recordings is full/);
+  const s2 = await call(e, "POST", `/rec/${a.rec}/start`, { body: { kind: "inperson", mime: "audio/webm", startedAt: NOW } });
+  assert.equal(s2.status, 200);
+  assert.equal((await call(e, "POST", `/rec/${a.rec}/chunk?id=${s2.data.id}&seq=0`, { raw: bytesOf(200, 1) })).status, 507);
+  // The owner's phone link still has the whole shared cap.
+  const so = await recStart(e);
+  assert.equal((await recChunk(e, so.data.id, 0, bytesOf(5000, 1))).status, 200);
+  // At most 50 members.
+  for (let i = 1; i < 50; i++) assert.equal((await owner(e, "POST", "/api/team/members", { body: { name: `m${i}` } })).status, 200);
+  assert.equal((await owner(e, "POST", "/api/team/members", { body: { name: "one too many" } })).status, 409);
+});
+
+test("team: removing a member revokes their tokens and deletes their private data; shared meetings are their choice", async () => {
+  const { e, a, b, team } = await teamWorld();
+  const s = await call(e, "POST", `/rec/${a.rec}/start`, { body: { kind: "inperson", mime: "audio/webm", startedAt: NOW } });
+  await call(e, "POST", `/rec/${a.rec}/chunk?id=${s.data.id}&seq=0`, { raw: bytesOf(10, 1) });
+
+  // Dana: shared meetings kept.
+  let r = await owner(e, "DELETE", `/api/team/members/${a.id}`, { body: { deleteShared: false } });
+  assert.deepEqual(r.data, { ok: true, deletedMeetings: 1, deletedRecordings: 1, keptShared: 1 });
+  assert.equal((await call(e, "GET", "/api/me", { token: a.upload })).status, 401);
+  assert.equal((await call(e, "POST", `/mcp/${a.mcp}`, { body: TEAM_PING })).status, 404);
+  assert.equal((await call(e, "GET", `/rec/${a.rec}`)).status, 404);
+  assert.equal(e.DB.db.prepare("SELECT COUNT(*) AS n FROM recording_chunks WHERE id = ?").get(s.data.id).n, 0);
+  assert.equal(e.DB.db.prepare("SELECT COUNT(*) AS n FROM meetings WHERE uploaded_by = ? AND shared = 0").get(a.id).n, 0);
+  const shared = await toolAs(e, team.token, "search_meetings", { query: "danasharedword" });
+  assert.match(shared.text, /shared by: דנה \(no longer in the team\)/);
+  assert.equal((await owner(e, "GET", "/api/team")).data.members.map((m) => m.name).join(), "Yossi");
+  // The same code or old tokens can't come back.
+  assert.equal((await call(e, "POST", "/api/team/join", { body: { code: a.code } })).status, 404);
+  assert.equal((await owner(e, "DELETE", `/api/team/members/${a.id}`)).status, 404);
+
+  // Yossi: everything goes, and his row too.
+  r = await owner(e, "DELETE", `/api/team/members/${b.id}`, { body: { deleteShared: true } });
+  assert.deepEqual(r.data, { ok: true, deletedMeetings: 2, deletedRecordings: 0, keptShared: 0 });
+  assert.equal(e.DB.db.prepare("SELECT COUNT(*) AS n FROM members WHERE id = ?").get(b.id).n, 0);
+  assert.deepEqual(await visibleWords(e, team.token), ["ownersharedword", "danasharedword"]);
+});
+
+test("team: a new invite moves a member to a new computer: old tokens stop, meetings stay", async () => {
+  const { e, a } = await teamWorld();
+  const inv = await owner(e, "POST", `/api/team/members/${a.id}/invite`);
+  assert.equal(inv.status, 200);
+  teamSecrets.push(inv.data.invite.code);
+  // Until it is used, the current tokens keep working.
+  assert.equal((await call(e, "GET", "/api/me", { token: a.upload })).status, 200);
+  const joined = await call(e, "POST", "/api/team/join", { body: { code: inv.data.invite.code } });
+  assert.equal(joined.status, 200);
+  teamSecrets.push(...Object.values(joined.data.tokens));
+  assert.equal(joined.data.member.id, a.id);
+  assert.equal(joined.data.ownerName, "קלרה");
+  assert.equal((await call(e, "GET", "/api/me", { token: a.upload })).status, 401);
+  assert.equal((await call(e, "POST", `/mcp/${a.mcp}`, { body: TEAM_PING })).status, 404);
+  assert.deepEqual(await visibleWords(e, joined.data.tokens.mcp), ["danasharedword", "danaprivateword"]);
+});
+
+test("team: an older deployment upgrades by redeploying; its meetings and recordings are the owner's, unshared", async () => {
+  // The v1.1 tables (no team columns), with data.
+  const OLD = `
+    CREATE TABLE meetings (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL,
+      duration_sec INTEGER NOT NULL DEFAULT 0, source TEXT NOT NULL DEFAULT '', participants TEXT NOT NULL DEFAULT '[]',
+      scope TEXT, calendar_title TEXT, transcript TEXT NOT NULL DEFAULT '', summary TEXT, updated_at TEXT NOT NULL);
+    CREATE INDEX idx_meetings_started_at ON meetings (started_at);
+    CREATE TABLE recordings (id TEXT PRIMARY KEY, client_id TEXT, title TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'inperson',
+      mime TEXT NOT NULL, started_at TEXT NOT NULL, duration_sec INTEGER NOT NULL DEFAULT 0, bytes INTEGER NOT NULL DEFAULT 0,
+      chunks INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'recording', created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL, finished_at TEXT, claimed_at TEXT);
+    CREATE INDEX idx_recordings_status ON recordings (status, started_at);
+    CREATE UNIQUE INDEX idx_recordings_client_id_unique ON recordings (client_id);
+    CREATE TABLE recording_chunks (id TEXT NOT NULL, seq INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY (id, seq));
+    CREATE TABLE recording_meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+    INSERT INTO recording_meta VALUES ('cleanup', 0);
+    INSERT INTO meetings (id, title, started_at, transcript, updated_at) VALUES ('m_old', 'ישנה', '${NOW}', 'oldmeetingword', '${NOW}');
+    INSERT INTO recordings (id, title, mime, started_at, status, chunks, bytes, created_at, updated_at, finished_at)
+      VALUES ('r_00000000000000000000', 'old', 'audio/webm', '${NOW}', 'ready', 1, 3, '${NOW}', '${NOW}', '${NOW}');
+    INSERT INTO recording_chunks VALUES ('r_00000000000000000000', 0, x'010203');`;
+  const d = new FakeD1({ schema: false });
+  d.db.exec(OLD);
+  // The one-click update runs schema.sql again first: it must not fail on the older tables.
+  assert.doesNotThrow(() => d.db.exec(SCHEMA));
+  const e = env({ DB: d });
+  assert.match((await tool(e, "get_meeting", { id: "m_old" })).text, /oldmeetingword/);
+  assert.deepEqual((await api(e, "GET", "/api/recordings")).data.recordings.map((r) => r.id), ["r_00000000000000000000"]);
+  assert.deepEqual({ ...d.db.prepare("SELECT uploaded_by, shared FROM meetings").get() }, { uploaded_by: "owner", shared: 0 });
+  assert.equal(d.db.prepare("SELECT member_id FROM recordings").get().member_id, "owner");
+  // A member and a team connector added afterwards see none of it.
+  const a = await addMember(e, "דנה");
+  const team = await teamConnector(e);
+  assert.match((await toolAs(e, team.token, "list_meetings", { days: 30 })).text, /No meetings/);
+  assert.match((await toolAs(e, a.mcp, "search_meetings", { query: "oldmeetingword" })).text, /No meetings contain/);
+  assert.deepEqual((await call(e, "GET", "/api/recordings", { token: a.upload })).data.recordings, []);
+  // A second isolate on the upgraded database starts cleanly.
+  const again = env({ DB: Object.assign(Object.create(FakeD1.prototype), { db: d.db }) });
+  assert.equal((await upload(again, meeting({ id: "m_after" }))).status, 200);
+});
+
+test("team: member tokens and invite codes never reach the logs", () => {
+  assert.ok(teamSecrets.length > 20);
+  for (const line of logged) for (const secret of teamSecrets) assert.equal(line.includes(secret), false);
 });
 
 test("the Worker never logs transcript text or the token", () => {

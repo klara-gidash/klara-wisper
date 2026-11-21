@@ -41,6 +41,8 @@ export interface MeetingPayload {
   calendarTitle: string | null
   transcript: string
   summary: string | null
+  /** Team cloud only: shared with the team. Left out on a personal Worker (it keeps what a meeting had). */
+  shared?: boolean
 }
 
 /** The same meeting, with the summary and then the transcript cut so the row fits; a note says the transcript was cut. */

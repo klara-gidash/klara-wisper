@@ -29,6 +29,7 @@ export const defaults: Settings = {
   asrLanguage: 'he',
   cloudSync: false,
   cloudUrl: '',
+  teamAutoShare: { mode: 'never', domains: [], since: null },
   obsidianEnabled: false,
   obsidianVault: '',
   claudePush: 'off',

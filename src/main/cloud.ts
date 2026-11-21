@@ -3,6 +3,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { toMarkdown } from '@shared/transcript'
 import { fitMeetingPayload } from './cloudPayload'
+import { clearTeam, shareForUpload } from './cloudTeamState'
 import { MeetingGoneError } from './recordingsPull'
 import { dataDir } from './paths'
 import { settings } from './settings'
@@ -109,9 +110,10 @@ export async function configureCloud(opts: { url: string; token?: string; enable
   return cloudState()
 }
 
-/** Forgets this computer's connection: every saved token and what the one-click deploy made. */
+/** Forgets this computer's connection: every saved token, what the one-click deploy made, and a team membership. */
 export function forgetCloud(): CloudState {
   for (const f of [TOKEN_FILE, MCP_TOKEN_FILE, REC_TOKEN_FILE, API_TOKEN_FILE, DEPLOY_FILE]) rmSync(f, { force: true })
+  clearTeam()
   settings.update({ cloudSync: false })
   return cloudState()
 }
@@ -182,6 +184,9 @@ async function upload(id: string, strict = false): Promise<void> {
   }
   const meta = m.meta
   const people = (meta.attendees ?? []).filter((a) => !a.isMe).map((a) => a.name || a.email)
+  // In a team cloud: shared with the team or not (off unless the user or the automatic rule said so). Outside a
+  // team the field is left out, as before.
+  const shared = shareForUpload(meta)
   // Cut to what one D1 row holds, in bytes (Hebrew is 2 bytes a letter): a longer body would get 413 forever.
   const body = fitMeetingPayload(
     {
@@ -194,7 +199,8 @@ async function upload(id: string, strict = false): Promise<void> {
       scope: meta.scope ?? null,
       calendarTitle: meta.calendarEvent?.title ?? null,
       transcript: toMarkdown(meta, m.segments, settings.value.userName),
-      summary: m.summary ?? null
+      summary: m.summary ?? null,
+      ...(shared === undefined ? {} : { shared })
     },
     settings.value.uiLanguage === 'en' ? 'en' : 'he'
   )

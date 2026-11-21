@@ -28,6 +28,11 @@ import { asrChoices, selectAsr, selectLanguage } from './models'
 import { checkCloud, configureCloud, deleteCloud, forgetCloud, syncAllCloud } from './cloud'
 import { cloudLinks, deployCloud, forgetApiToken, fullCloudState, rotatePhoneLink, updateCloudWorker } from './cloudDeploy'
 import { pullPhoneRecordings } from './phoneRecordings'
+import {
+  createTeamConnector, deleteTeamConnector, inviteMember, joinTeam, meetingShare, reinviteMember, removeMember,
+  setAutoShare, setMeetingShare, setOwnerName, teamState
+} from './cloudTeam'
+import { forgetShareChoice } from './cloudTeamState'
 import { disableObsidian, enableObsidian, exportAllObsidian, obsidianState, pickObsidianVault } from './obsidian'
 import { autoSummary } from './summarize'
 import { dismissSpeakerPrompt, nameSpeaker, undoAutoSpeaker } from './speakerNaming'
@@ -323,6 +328,7 @@ export function registerIpc(detector: Detector): void {
     if (settings.value.cloudSync) {
       void deleteCloud(id).catch((err) => console.warn(`cloud sync: could not delete ${id} from the Worker: ${(err as Error).message}`))
     }
+    forgetShareChoice(id)
   })
   handle('meetings:reveal', (id: string) => shell.showItemInFolder(join(meetingFolder(id), 'transcript.md')))
   handle('meetings:copy', (id: string) => {
@@ -490,6 +496,19 @@ export function registerIpc(detector: Detector): void {
     await pullPhoneRecordings()
     return fullCloudState()
   })
+  // Team cloud (optional): the owner invites and removes teammates; a teammate joins with an invite code.
+  const text = (v: unknown, max = 200): string => (typeof v === 'string' ? v.slice(0, max) : '')
+  handle('team:state', () => teamState())
+  handle('team:invite', (name: unknown) => inviteMember(text(name)))
+  handle('team:reinvite', (id: unknown) => reinviteMember(text(id, 40)))
+  handle('team:remove', (id: unknown, deleteShared: unknown) => removeMember(text(id, 40), deleteShared === true))
+  handle('team:createConnector', (label: unknown) => createTeamConnector(text(label)))
+  handle('team:deleteConnector', (id: unknown) => deleteTeamConnector(text(id, 40)))
+  handle('team:ownerName', (name: unknown) => setOwnerName(text(name)))
+  handle('team:join', (invite: unknown) => joinTeam(text(invite, 4000)))
+  handle('team:autoShare', (rule: unknown) => setAutoShare((rule ?? {}) as { mode?: unknown; domains?: unknown }))
+  handle('meetings:share', (id: string) => meetingShare(String(id)))
+  handle('meetings:setShare', (id: string, shared: unknown) => setMeetingShare(String(id), shared === true))
   // Optional Obsidian export: one note per call in the vault the user picks.
   handle('obsidian:state', () => obsidianState())
   handle('obsidian:pickVault', () => pickObsidianVault())
