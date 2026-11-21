@@ -6,31 +6,13 @@ import { promisify } from 'node:util'
 import * as claude from './claude'
 import { engine } from './engine'
 import { helper } from './helper'
-import { dataDir, defaultFolder, managedEngineDir } from './paths'
+import { dataDir, defaultFolder } from './paths'
 import { settings } from './settings'
+import { stopEngineProcesses } from './engineProcesses'
 import { setup } from './setup'
 
 const run = promisify(execFile)
 
-/**
- * Stops every Python process that runs from the app's own engine folder: the engine, a model
- * download, and the MCP server Claude Desktop started (which would keep files open on Windows).
- */
-export async function stopEngineProcesses(): Promise<void> {
-  try {
-    if (process.platform === 'win32') {
-      await run(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', 'Get-Process -Name python* -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($env:KLARA_KILL_DIR, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force'],
-        { timeout: 20_000, windowsHide: true, env: { ...process.env, KLARA_KILL_DIR: managedEngineDir } }
-      )
-    } else {
-      await run('/usr/bin/pkill', ['-f', `${managedEngineDir}/`], { timeout: 5000 })
-    }
-  } catch {
-    /* nothing was running */
-  }
-}
 
 /** What "Klara Wisper.exe --cleanup" (the Windows uninstaller) and "Remove" on the Mac take out first. */
 export async function cleanupOutside(): Promise<void> {
@@ -87,7 +69,11 @@ export async function removeApp(): Promise<boolean> {
   helper.stop()
   engine.stop()
   await cleanupOutside()
-  await run('/usr/bin/tccutil', ['reset', 'All', 'io.klara.wisper'], { timeout: 10_000 }).catch(() => undefined)
+  // The helper holds its own permissions (microphone, system audio, calendar…): it is its own
+  // responsible process (Disclaim.swift), so both bundle ids are reset.
+  for (const id of ['io.klara.wisper', 'io.klara.wisper.helper']) {
+    await run('/usr/bin/tccutil', ['reset', 'All', id], { timeout: 10_000 }).catch(() => undefined)
+  }
   rmSync(dataDir, { recursive: true, force: true })
   app.exit(0)
   return true

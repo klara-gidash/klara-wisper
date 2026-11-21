@@ -52,9 +52,11 @@ export function desktopInstalled(): boolean {
  * In an installed app that is <data folder>/engine (set up on first launch), so the entry keeps
  * working when the app is moved or updated.
  */
-export function mcpEntry(): { command: string; args: string[]; env: Record<string, string> } {
-  // UTF-8 I/O: on Windows with a Hebrew user name Python's default code page can't encode the paths.
-  return { command: enginePython(), args: ['-m', 'klara_engine.mcp_server'], env: { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } }
+export function mcpEntry(): { command: string; args: string[] } {
+  // -X utf8 (Python's UTF-8 mode, set before site-packages and .pth files are read): on Windows with a
+  // Hebrew user name the default code page can't read the paths. An argument, not an "env" entry:
+  // some MCP clients treat "env" as the whole environment and would drop APPDATA, USERPROFILE and PATH.
+  return { command: enginePython(), args: ['-X', 'utf8', '-m', 'klara_engine.mcp_server'] }
 }
 
 /** Parsed config, `{}` if there is none yet (or it is empty); throws if the file isn't valid JSON. */
@@ -157,7 +159,8 @@ export function runCli(cli: string, args: string[], opts: { timeout: number; cwd
 
 const sameEntry = (a: any): boolean => {
   const want = mcpEntry()
-  return a?.command === want.command && JSON.stringify(a?.args) === JSON.stringify(want.args) && JSON.stringify(a?.env ?? null) === JSON.stringify(want.env)
+  // An "env" left by an earlier test build counts as different, so the entry is rewritten without it.
+  return a?.command === want.command && JSON.stringify(a?.args) === JSON.stringify(want.args) && a?.env === undefined
 }
 
 export async function status(): Promise<{ desktop: boolean; desktopInstalled: boolean; code: boolean; codeCli: boolean; snippet: string }> {

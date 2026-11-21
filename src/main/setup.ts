@@ -13,7 +13,7 @@ import {
   bundledEngineSource, dataDir, engineDir, enginePython, isWindows, managedEngineDir, managesEngine, modelsDir, uvPath
 } from './paths'
 import { freeGB, proxyEnv } from './preflight'
-import { stopEngineProcesses } from './uninstall'
+import { stopEngineProcesses } from './engineProcesses'
 
 /**
  * First-launch setup of an installed app, so it needs nothing but itself:

@@ -41,13 +41,19 @@ export function createMeetingFolder(meta: Pick<MeetingMeta, 'startedAt' | 'sourc
 }
 
 /** Renames the folder when the title changed (e.g. matched to a calendar event at the end). */
-export function renameMeetingFolder(folder: string, meta: MeetingMeta): string {
+/**
+ * Renames a meeting's folder after its title. While the recording is still being processed (its
+ * .raw folder exists) the folder keeps its name: the engine reads .raw for the speaker step after
+ * sending the transcript, and the finalizer renames the folder itself at the very end (force).
+ */
+export function renameMeetingFolder(folder: string, meta: MeetingMeta, opts: { force?: boolean } = {}): string {
   const wanted = folderLabel(meta)
   if (basename(folder) === wanted) return folder
+  if (!opts.force && existsSync(join(folder, '.raw'))) return folder
   let target = join(dirname(folder), wanted)
   for (let i = 2; existsSync(target); i++) target = join(dirname(folder), `${wanted} (${i})`)
   try {
-    renameSync(folder, target)
+    withRetry(() => renameSync(folder, target))
     return target
   } catch {
     return folder

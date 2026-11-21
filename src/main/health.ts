@@ -65,9 +65,9 @@ export function mcpSelfTest(timeoutMs = 45_000): Promise<string | null> {
     const python = enginePython()
     if (!existsSync(python)) return resolve('engine not installed')
     const entry = claude.mcpEntry()
-    // UTF-8 everywhere, as in Claude's config (a Hebrew Windows user name breaks the default code page).
-    const env = { ...process.env, ...(entry.env ?? {}), PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' }
-    const proc = spawn(entry.command, entry.args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env })
+    // Started exactly as Claude starts it: the entry's command and arguments (UTF-8 mode is one of them),
+    // no extra environment, so a Hebrew Windows user name is tested the way Claude will meet it.
+    const proc = spawn(entry.command, entry.args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
     let buf = ''
     let err = ''
     let done = false

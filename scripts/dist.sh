@@ -18,15 +18,24 @@ if security find-certificate -c "Klara Wisper Local" >/dev/null 2>&1; then
     --entitlements resources/entitlements.mac.plist --sign "Klara Wisper Local" "$APP"
   codesign --verify --deep --strict "$APP"
 fi
-# A running copy is quit the normal way first (a recording in progress is saved; the app turns
-# SIGTERM into the same quit), waiting up to 120 s for it to finish.
+# A running copy is quit the normal way first: SIGTERM, which the app turns into its usual quit
+# (no osascript: "tell application … to quit" would raise an Automation permission prompt).
+# Never while a call is being recorded (quitting would cut the call): a meeting whose meta.json
+# says "recording" and changed in the last 15 minutes stops the update. FORCE=1 skips that check.
 MAIN_BIN="/Applications/Klara Wisper.app/Contents/MacOS/Klara Wisper"
 if pgrep -f "$MAIN_BIN" >/dev/null 2>&1; then
-  echo "Klara Wisper is running: asking it to quit (a recording in progress is saved)..."
-  osascript -e 'tell application "Klara Wisper" to quit' >/dev/null 2>&1 || pkill -TERM -f "$MAIN_BIN" || true
+  DATA="$HOME/Library/Application Support/Klara Wisper"
+  FOLDER="$(/usr/bin/plutil -extract folder raw -o - "$DATA/settings.json" 2>/dev/null || true)"
+  [ -n "$FOLDER" ] || FOLDER="$HOME/Documents/Klara Wisper"
+  if [ "${FORCE:-}" != 1 ] && [ -d "$FOLDER/Meetings" ] && \
+     find "$FOLDER/Meetings" -name meta.json -mmin -15 -exec grep -l '"status": "recording"' {} + 2>/dev/null | grep -q .; then
+    echo "Klara Wisper is recording a call right now: run this again after the call (or FORCE=1)." >&2
+    exit 1
+  fi
+  echo "Klara Wisper is running: asking it to quit (anything being saved is finished first)..."
+  pkill -TERM -f "$MAIN_BIN" || true
   for i in $(seq 1 120); do
     pgrep -f "$MAIN_BIN" >/dev/null 2>&1 || break
-    [ "$i" = 30 ] && pkill -TERM -f "$MAIN_BIN" 2>/dev/null || true
     sleep 1
   done
   if pgrep -f "$MAIN_BIN" >/dev/null 2>&1; then

@@ -31,11 +31,11 @@ function Count-Hebrew($Segs, [string]$Stream) { @($Segs | Where-Object { $_.stre
 
 try {
   Initialize-Audio
-  & python (Join-Path $E2E 'play.py') --list 2>&1 | Write-Host
+  & python -X utf8 (Join-Path $E2E 'play.py') --list 2>&1 | Write-Host
 
   Install-Klara $Setup
   New-Item -ItemType Directory -Force -Path (Join-Path $env:APPDATA 'Claude'), $Folder, $CallDir | Out-Null
-  & python (Join-Path $E2E 'make_ics.py') $Ics
+  & python -X utf8 (Join-Path $E2E 'make_ics.py') $Ics
   if ($LASTEXITCODE -ne 0) { Fail 'calendar .ics' 'make_ics.py failed' }
   $env:KLARA_E2E_ICS_FILE = $Ics
   Write-Settings @{ onboarded = $true; autoRecord = $true; autoSummary = $false; keepAudio = $true; launchAtLogin = $false; claudeConnected = $true; folder = $Folder }
@@ -81,9 +81,9 @@ try {
   $deadline = (Get-Date).AddMinutes(6)
   $mic = 0; $sys = 0
   while ((Get-Date) -lt $deadline) {
-    & python (Join-Path $E2E 'play.py') $ClipMine 'CABLE Input' 2>&1 | Write-Host
+    & python -X utf8 (Join-Path $E2E 'play.py') $ClipMine 'CABLE Input' 2>&1 | Write-Host
     Start-Sleep 4
-    & python (Join-Path $E2E 'play.py') $ClipOther 'default' 2>&1 | Write-Host
+    & python -X utf8 (Join-Path $E2E 'play.py') $ClipOther 'default' 2>&1 | Write-Host
     Start-Sleep 10
     $segs = Get-Segments $MeetingDir
     $mic = Count-Hebrew $segs 'mic'; $sys = Count-Hebrew $segs 'system'

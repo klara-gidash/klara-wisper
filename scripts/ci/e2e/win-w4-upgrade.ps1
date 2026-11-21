@@ -25,7 +25,7 @@ try {
 
   # Claude Desktop's MCP server stays open during the upgrade.
   $mcp = Start-Process -FilePath python -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $Out 'mcp-held-open.txt') `
-    -ArgumentList "`"$(Join-Path $E2E 'mcp_check.py')`"", '--config', "`"$ClaudeConfig`"", '--keep-running', '3600'
+    -ArgumentList '-X', 'utf8', "`"$(Join-Path $E2E 'mcp_check.py')`"", '--config', "`"$ClaudeConfig`"", '--keep-running', '3600'
   Start-Sleep 20
   if ($mcp.HasExited) { Fail 'MCP server held open (as Claude Desktop does)' "exited $($mcp.ExitCode)" }
   Pass 'MCP server held open (as Claude Desktop does)' "pid $($mcp.Id)"

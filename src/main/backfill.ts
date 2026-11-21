@@ -1,11 +1,15 @@
 import { SOURCE_LABEL } from '@shared/types'
 import { matchEventChecked, matchVersion } from './calendar'
 import { db } from './storage/db'
+import { isGenericTitle } from './meetings/titles'
 import { listMeetingFolders, readMeeting, renameMeetingFolder, writeMeeting } from './storage/files'
 import { broadcast } from './windows'
 
-/** Titles the recorder gives when it knows nothing better ("Zoom 14:30", "פגישה 09:00"). */
-const DEFAULT_TITLE = new RegExp(`^(?:פגישה|${Object.values(SOURCE_LABEL).map((l) => l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')}) \\d{1,2}:\\d{2}$`)
+/**
+ * Titles that say nothing about the call: the recorder's default ("Zoom 14:30", "פגישה 09:00"), a
+ * Meet code or a tab/app name ("abc-defg-hij", "Zoom Meeting", "Chat").
+ */
+const placeholder = (title: string | undefined): boolean => isGenericTitle(title, Object.values(SOURCE_LABEL))
 
 let running = false
 
@@ -25,7 +29,19 @@ export async function matchPastMeetings(): Promise<void> {
     for (const folder of listMeetingFolders()) {
       const m = readMeeting(folder)
       const meta = m?.meta
-      if (!m || !meta || meta.status !== 'done' || meta.calendarChecked === version) continue
+      if (!m || !meta || meta.status !== 'done') continue
+      // Matched at its start, but a browser tab's placeholder kept the title ("abc-defg-hij"; before
+      // 0.1.3 the tab title won over the event's): give it the event's title, no lookup needed.
+      const ev = meta.calendarEvent
+      if (ev?.title && meta.titleSource !== 'user' && meta.title !== ev.title && placeholder(meta.title)) {
+        meta.title = ev.title
+        meta.titleSource = 'calendar'
+        meta.folder = renameMeetingFolder(meta.folder, meta)
+        writeMeeting(meta.folder, meta, m.segments)
+        db().indexMeeting(meta, m.segments)
+        broadcast('meetings:changed', meta.id)
+      }
+      if (meta.calendarChecked === version) continue
       // Matched by an older, looser pass (titleSource "calendar"), or never matched: look it up (again).
       const redo = meta.titleSource === 'calendar'
       if (meta.calendarEvent && !redo) continue
@@ -41,7 +57,7 @@ export async function matchPastMeetings(): Promise<void> {
         if (redo && meta.calendarEvent?.id !== event.id && event.attendees.length) meta.attendees = []
         meta.calendarEvent = event
         if (!meta.attendees?.length) meta.attendees = event.attendees
-        if (meta.titleSource !== 'user' && (meta.titleSource === 'calendar' || meta.titleSource === 'claude' || DEFAULT_TITLE.test(meta.title) || !meta.title)) {
+        if (meta.titleSource !== 'user' && (meta.titleSource === 'calendar' || meta.titleSource === 'claude' || placeholder(meta.title))) {
           meta.title = event.title
           meta.titleSource = 'calendar'
         }

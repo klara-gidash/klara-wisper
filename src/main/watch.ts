@@ -14,21 +14,30 @@ import { broadcast } from './windows'
  */
 let watcher: FSWatcher | null = null
 const timers = new Map<string, NodeJS.Timeout>()
+let failures = 0
+let retry: NodeJS.Timeout | null = null
+
+/** Tries again later: 5 s, then longer each time, at most every 5 minutes (and logs only now and then). */
+function retryLater(what: string, err: unknown): void {
+  failures++
+  if (failures <= 3 || failures % 20 === 0) console.warn(`library ${what}, retrying (${failures})`, String(err))
+  if (retry) clearTimeout(retry)
+  retry = setTimeout(watchLibrary, Math.min(5_000 * 2 ** Math.min(failures - 1, 6), 300_000))
+}
 
 export function watchLibrary(): void {
+  retry = null
   watcher?.close()
+  watcher = null
   const root = meetingsRoot()
   try {
     // Documents denied (macOS) or Controlled Folder Access (Windows): keep starting, health shows 'storage'
     mkdirSync(root, { recursive: true })
     watcher = watch(root, { recursive: true }, onChange)
-    watcher.on('error', (err) => {
-      console.warn('library watch stopped, retrying', String(err))
-      setTimeout(watchLibrary, 5_000)
-    })
+    watcher.on('error', (err) => retryLater('watch stopped', err))
+    failures = 0
   } catch (err) {
-    console.warn('library watch failed, retrying', String(err))
-    setTimeout(watchLibrary, 5_000)
+    retryLater('watch failed', err)
   }
 }
 

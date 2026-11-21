@@ -88,7 +88,6 @@ class Finalizer {
     meta.speakers = speakers
     meta.languages = [...new Set(segments.map((s) => s.lang))]
     meta.status = 'done'
-    meta.folder = renameMeetingFolder(meta.folder, meta)
     writeMeeting(meta.folder, meta, segments)
     db().indexMeeting(meta, segments)
     broadcast('meetings:changed', meta.id)
@@ -102,7 +101,22 @@ class Finalizer {
       // The raw recording is only needed until the audio file exists and the speaker step read it
       // (or at all, when the user doesn't keep audio).
       if (!settings.value.keepAudio || existsSync(join(meta.folder, 'audio.m4a'))) rmSync(join(meta.folder, '.raw'), { recursive: true, force: true })
+      // Only now the folder may take the meeting's title: the engine read .raw for the speaker step
+      // by its old path (renaming right after the transcript lost the speakers of calendar-named calls).
+      this.renameFolder(meta)
     }
+  }
+
+  private renameFolder(meta: MeetingMeta): void {
+    const current = readMeeting(meta.folder) // a title the user typed meanwhile wins
+    const m = current?.meta ?? meta
+    const folder = renameMeetingFolder(meta.folder, m, { force: true })
+    if (folder === meta.folder) return
+    meta.folder = folder
+    const renamed = { ...m, folder }
+    writeMeta(folder, renamed)
+    if (current) db().indexMeeting(renamed, current.segments)
+    broadcast('meetings:changed', meta.id)
   }
 
   private async addSpeakers(job: FinalizeJob, segments: Segment[], speakersP: Promise<any>): Promise<void> {

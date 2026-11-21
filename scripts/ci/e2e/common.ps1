@@ -3,7 +3,9 @@
 # "ok: ..." or "FAIL: ..." and is added to a summary table printed by Write-Summary.
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
-$env:PYTHONUTF8 = '1' # Hebrew in the helper scripts' output
+# Not $env:PYTHONUTF8: it would leak into the app and the MCP server and hide a missing UTF-8 setting
+# (the Hebrew-profile bug W3 exists to catch). The test scripts run with python -X utf8 instead.
+Remove-Item Env:PYTHONUTF8, Env:PYTHONIOENCODING -ErrorAction SilentlyContinue
 
 if ($env:GITHUB_ACTIONS -ne 'true' -and $env:KLARA_SMOKE_FORCE -ne '1') {
   Write-Host 'Refusing to run outside GitHub Actions (it installs/uninstalls the app and replaces its settings). Set KLARA_SMOKE_FORCE=1 on a throwaway machine.'
@@ -171,7 +173,7 @@ function Wait-Health([string[]]$Required, [string[]]$AllowWarn = @('transcribe')
 }
 
 function Invoke-McpCheck([string[]]$Extra = @(), [string]$Name = 'MCP client') {
-  & python (Join-Path $E2E 'mcp_check.py') --config $ClaudeConfig @Extra 2>&1 | Tee-Object -FilePath (Join-Path $Out 'mcp-check.txt') -Append | Write-Host
+  & python -X utf8 (Join-Path $E2E 'mcp_check.py') --config $ClaudeConfig @Extra 2>&1 | Tee-Object -FilePath (Join-Path $Out 'mcp-check.txt') -Append | Write-Host
   if ($LASTEXITCODE -ne 0) { Soft-Fail $Name 'see mcp-check.txt' } else { Pass $Name ($Extra -join ' ') }
 }
 
