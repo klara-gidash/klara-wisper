@@ -7,6 +7,7 @@ import { audio } from './audio'
 import * as claude from './claude'
 import { engine } from './engine'
 import { lookupBetween } from './calendar'
+import { checkCloud, cloudConfigured, cloudNeedsRelink } from './cloud'
 import { googleReadable } from './googleCalendar'
 import { helper } from './helper'
 import { recorder } from './meetings/recorder'
@@ -22,7 +23,7 @@ import { missingModels, requiredModels, setup } from './setup'
  * Claude can start the connection), not just "the file is there".
  */
 
-const ORDER: HealthItem['id'][] = ['app', 'helper', 'engine', 'models', 'transcribe', 'speakers', 'microphone', 'permissions', 'calendar', 'claude', 'storage']
+const ORDER: HealthItem['id'][] = ['app', 'helper', 'engine', 'models', 'transcribe', 'speakers', 'microphone', 'permissions', 'calendar', 'claude', 'cloud', 'storage']
 /** A 9-second Hebrew sentence shipped with the app ("…התוכנית…המשימות…"). */
 const SAMPLE_SECONDS = 9
 const SAMPLE_WORDS = ['התוכנית', 'משימות', 'היום', 'צוות']
@@ -131,7 +132,7 @@ export function runHealth(onUpdate?: (items: HealthItem[]) => void): Promise<Hea
 
 async function doRun(onUpdate?: (items: HealthItem[]) => void): Promise<HealthReport> {
   const mac = process.platform === 'darwin'
-  const ids = ORDER.filter((id) => id !== 'permissions' || mac)
+  const ids = ORDER.filter((id) => (id !== 'permissions' || mac) && (id !== 'cloud' || cloudConfigured()))
   const items: HealthItem[] = ids.map((id) => ({ id, status: 'running' as const }))
   const put = (id: HealthItem['id'], patch: Omit<HealthItem, 'id'>): void => {
     const i = items.findIndex((x) => x.id === id)
@@ -265,6 +266,18 @@ async function doRun(onUpdate?: (items: HealthItem[]) => void): Promise<HealthRe
     const problem = await mcpSelfTest()
     if (problem) return { status: 'fail', code: 'serverFailed', detail: problem.slice(0, 300) }
     return { status: 'ok', detail: [s.desktop && s.desktopInstalled ? 'Claude Desktop' : '', s.code ? 'Claude Code' : ''].filter(Boolean).join(' + ') }
+  })
+
+  // 9b. the optional cloud (only listed when it was set up): the saved token is readable and the Worker accepts it
+  await check('cloud', async () => {
+    if (cloudNeedsRelink()) return { status: 'warn', code: 'needsRelink' }
+    if (!settings.value.cloudSync) return { status: 'skip', code: 'off' }
+    try {
+      await checkCloud()
+    } catch (err) {
+      return { status: 'warn', code: 'unreachable', detail: String((err as Error).message).slice(0, 200) }
+    }
+    return { status: 'ok', detail: new URL(settings.value.cloudUrl).host }
   })
 
   // 10. room and write access for the recordings

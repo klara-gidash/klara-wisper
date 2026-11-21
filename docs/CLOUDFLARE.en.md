@@ -24,6 +24,8 @@ Everything lives in **your own private Cloudflare account**: a small database an
 
 You can delete the API token in Cloudflare after setup: the app doesn't need it to work. To update the Worker or replace the phone link later, create a new token from the same link and paste it (or tick “keep for updates” during setup).
 
+**Setting up again** (on a second computer, or after "Disconnect this computer from the cloud"): if the account already has the Worker, the app stops and asks first. A new setup replaces all three tokens, so another computer that syncs with the Worker stops syncing, and you add the claude.ai connector and the phone link again. If this computer still has the tokens, choose "Update, keeping this computer’s keys" instead.
+
 ## The three tokens
 
 - **Upload token**: only Klara Wisper on your computer uses it, to upload calls, download recordings and delete. It is stored encrypted on the computer and never leaves it, except to your Worker.

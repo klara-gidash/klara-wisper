@@ -2,7 +2,7 @@
 // any failure keeps the recording in the cloud. Run with `node --test test/recordings-pull.test.mts`.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { MAX_FAILURES, RecordingsPuller, parseRecordingList, wavHeader, type PendingCleanup, type PullDeps } from '../src/main/recordingsPull.ts'
+import { MAX_FAILURES, MeetingGoneError, RecordingsPuller, parseRecordingList, phoneTitle, wavHeader, type PendingCleanup, type PullDeps } from '../src/main/recordingsPull.ts'
 
 const rec = (id: string, startedAt = '2026-11-20T10:00:00Z') => ({ id, title: null, startedAt, kind: 'phone' as const, status: 'ready' as const, contentType: 'audio/webm', durationSec: 60 })
 
@@ -119,6 +119,59 @@ test('parseRecordingList: the Worker contract, oldest first, bad rows dropped', 
   assert.deepEqual(l.map((r) => r.id), ['a', 'b'])
   assert.equal(l[1].contentType, 'audio/mp4')
   assert.equal(l[1].kind, 'inperson')
+})
+
+test('the meeting was deleted here before the cloud copy was cleaned up: the recording is deleted too, not transcribed again', async () => {
+  const s = setup({ fail: 'upload m_r1' })
+  await s.p.pullOnce()
+  assert.deepEqual(s.pending(), [{ recordingId: 'r1', meetingId: 'm_r1' }])
+  // The user deletes the meeting; uploadNow now rejects with MeetingGoneError.
+  ;(s as any).p.deps.upload = async (id: string) => {
+    s.log.push(`upload ${id}`)
+    throw new MeetingGoneError(id)
+  }
+  const r = await s.p.pullOnce()
+  assert.deepEqual(r.cleaned, ['r1'])
+  assert.equal(s.cloud.size, 0)
+  assert.deepEqual(s.pending(), [])
+  assert.equal(s.log.filter((l) => l === 'transcribe r1').length, 1)
+})
+
+test('an upload that fails for another reason (meeting not finished, 401) keeps the recording', async () => {
+  const s = setup()
+  ;(s as any).p.deps.upload = async () => {
+    throw new Error('meeting m_r1 is not finished yet (processing)')
+  }
+  await s.p.pullOnce()
+  assert.ok(s.cloud.has('r1'))
+  assert.deepEqual(s.pending(), [{ recordingId: 'r1', meetingId: 'm_r1' }])
+})
+
+test('a try that fails before the transcript is saved hands the claim back; one that fails after it does not', async () => {
+  for (const stage of ['download r1', 'decode r1', 'transcribe r1']) {
+    const s = setup({ fail: stage })
+    const released: string[] = []
+    ;(s as any).p.deps.release = async (id: string) => void released.push(id)
+    await s.p.pullOnce()
+    assert.deepEqual(released, ['r1'], stage)
+  }
+  const s = setup({ fail: 'upload m_r1' })
+  const released: string[] = []
+  ;(s as any).p.deps.release = async (id: string) => void released.push(id)
+  await s.p.pullOnce()
+  assert.deepEqual(released, [], 'saved here: kept claimed, finished from the pending list')
+  // A release that fails itself changes nothing else.
+  const s2 = setup({ fail: 'decode r1' })
+  ;(s2 as any).p.deps.release = async () => {
+    throw new Error('offline')
+  }
+  const r = await s2.p.pullOnce()
+  assert.equal(r.failed[0].error, 'decode r1 failed')
+})
+
+test('phoneTitle is in Israel time whatever the computer time zone', () => {
+  assert.equal(phoneTitle('2026-11-20T10:05:00Z', 'en'), 'Phone recording 12:05')
+  assert.equal(phoneTitle('2026-07-20T10:05:00Z', 'he'), 'הקלטה מהטלפון 13:05')
 })
 
 test('wavHeader: 16 kHz mono 16-bit', () => {

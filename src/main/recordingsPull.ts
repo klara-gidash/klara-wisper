@@ -55,6 +55,19 @@ export function parseRecordingList(body: unknown): CloudRecording[] {
   return out.sort((a, b) => (a.startedAt ?? '').localeCompare(b.startedAt ?? ''))
 }
 
+/**
+ * The meeting made from a recording is gone here (the user deleted it before its cloud copy was cleaned up).
+ * Its recording is deleted in the cloud too, rather than transcribed again and the meeting brought back.
+ */
+export class MeetingGoneError extends Error {
+  readonly code = 'meeting-gone'
+  constructor(meetingId: string) {
+    super(`meeting ${meetingId} was deleted on this computer`)
+  }
+}
+
+export const isMeetingGone = (err: unknown): boolean => (err as { code?: unknown })?.code === 'meeting-gone'
+
 /** A transcript saved here whose recording isn't deleted in the cloud yet (kept across restarts). */
 export interface PendingCleanup {
   recordingId: string
@@ -69,8 +82,10 @@ export interface PullDeps {
   list(): Promise<CloudRecording[]>
   /** False when the recording is already taken (another computer, or gone). */
   claim(id: string): Promise<boolean>
+  /** Hands a claim back after a try that failed before the transcript was saved (optional: older Workers lack it). */
+  release?(id: string): Promise<void>
   download(id: string): Promise<{ bytes: Uint8Array; contentType: string | null }>
-  /** Decodes to 16 kHz mono and writes a .wav; its path. */
+  /** Decodes to 16 kHz mono and writes it as raw Int16 PCM (the .raw/mic.pcm format); its path. */
   decode(rec: CloudRecording, bytes: Uint8Array, contentType: string | null): Promise<string>
   /** A meeting made earlier from this recording (e.g. the app quit before the cloud copy was deleted). */
   findLocal(recordingId: string): { meetingId: string; status: string } | null
@@ -146,13 +161,23 @@ export class RecordingsPuller {
   private async finishPending(report: PullReport): Promise<void> {
     for (const p of this.deps.loadPending()) {
       try {
-        await this.deps.upload(p.meetingId)
+        await this.uploadOrGone(p.meetingId, p.recordingId)
         await this.deps.remove(p.recordingId)
         this.dropPending(p.recordingId)
         report.cleaned.push(p.recordingId)
       } catch (err) {
         this.deps.log(`phone recording ${p.recordingId}: cleanup will be tried again (${(err as Error).message})`)
       }
+    }
+  }
+
+  /** Uploads the transcript; a meeting deleted here meanwhile counts as done (its recording goes too). */
+  private async uploadOrGone(meetingId: string, recordingId: string): Promise<void> {
+    try {
+      await this.deps.upload(meetingId)
+    } catch (err) {
+      if (!isMeetingGone(err)) throw err
+      this.deps.log(`phone recording ${recordingId}: its meeting was deleted here, so the recording is deleted in the cloud too`)
     }
   }
 
@@ -168,13 +193,14 @@ export class RecordingsPuller {
   private async one(rec: CloudRecording, report: PullReport): Promise<void> {
     const d = this.deps
     let wav: string | null = null
+    let claimed = false // by this try, and not yet saved here: handed back on failure
     this.current = rec.id
     try {
       const local = d.findLocal(rec.id)
       if (local?.status === 'done') {
         // Transcribed before (e.g. the app quit before deleting it): only the cloud side is left.
         this.addPending({ recordingId: rec.id, meetingId: local.meetingId })
-        await d.upload(local.meetingId)
+        await this.uploadOrGone(local.meetingId, rec.id)
         await d.remove(rec.id)
         this.dropPending(rec.id)
         report.cleaned.push(rec.id)
@@ -184,21 +210,25 @@ export class RecordingsPuller {
       if (local) d.removeLocal(local.meetingId) // a failed try: start over from the cloud copy
 
       if (!(await d.claim(rec.id))) return
+      claimed = true
       const file = await d.download(rec.id)
       if (!file.bytes.byteLength) throw new Error('empty recording')
       wav = await d.decode(rec, file.bytes, file.contentType ?? rec.contentType)
       const meetingId = await d.transcribe(rec, wav)
       // Saved here: from now on only the cloud side is left, and it is retried until it's done.
       this.addPending({ recordingId: rec.id, meetingId })
+      claimed = false
       d.cleanup(wav)
       wav = null
       report.imported.push(meetingId)
-      await d.upload(meetingId)
+      await this.uploadOrGone(meetingId, rec.id)
       await d.remove(rec.id)
       this.dropPending(rec.id)
       this.failures.delete(rec.id)
     } catch (err) {
       const message = (err as Error)?.message ?? String(err)
+      // The next round (2 minutes) can try again at once, instead of waiting out the 30-minute claim.
+      if (claimed && d.release) await d.release(rec.id).catch(() => undefined)
       this.failures.set(rec.id, (this.failures.get(rec.id) ?? 0) + 1)
       report.failed.push({ id: rec.id, error: message })
       d.log(`phone recording ${rec.id}: ${message} (kept in the cloud for the next try)`)
@@ -210,7 +240,7 @@ export class RecordingsPuller {
 
 /** "הקלטה מהטלפון 14:05" (or the English one), at the recording's time in Israel. */
 export function phoneTitle(startedAt: string, lang: 'he' | 'en'): string {
-  const time = new Date(startedAt).toLocaleTimeString(lang === 'he' ? 'he-IL' : 'en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
+  const time = new Date(startedAt).toLocaleTimeString(lang === 'he' ? 'he-IL' : 'en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Jerusalem' })
   return lang === 'he' ? `הקלטה מהטלפון ${time}` : `Phone recording ${time}`
 }
 

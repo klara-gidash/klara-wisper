@@ -1,15 +1,15 @@
 import { Notification, shell } from 'electron'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { MeetingMeta } from '@shared/types'
-import { decodeToPcm16k } from './audioDecode'
+import { decodeToPcmFile } from './audioDecode'
 import { cloudHealth, cloudRequest, uploadNow } from './cloud'
 import { engine } from './engine'
 import { finalizer } from './meetings/finalize'
 import { recorder } from './meetings/recorder'
 import { dataDir } from './paths'
 import { transcribeSaved } from './recovery'
-import { RecordingsPuller, parseRecordingList, phoneTitle, wavHeader, type CloudRecording, type PendingCleanup } from './recordingsPull'
+import { RecordingsPuller, parseRecordingList, phoneTitle, type CloudRecording, type PendingCleanup } from './recordingsPull'
 import { settings } from './settings'
 import { db } from './storage/db'
 import { createMeetingFolder, listMeetingFolders, readMeta, writeMeta } from './storage/files'
@@ -57,7 +57,17 @@ function folderOf(meetingId: string): string | null {
   return null
 }
 
-async function makeMeeting(rec: CloudRecording, wavPath: string): Promise<string> {
+/** Moves the decoded PCM into place (a copy when the meeting folder is on another disk). */
+function movePcm(from: string, to: string): void {
+  try {
+    renameSync(from, to)
+  } catch {
+    copyFileSync(from, to)
+    rmSync(from, { force: true })
+  }
+}
+
+async function makeMeeting(rec: CloudRecording, pcmPath: string): Promise<string> {
   const startedAt = rec.startedAt ?? new Date().toISOString()
   const source = rec.kind === 'inperson' ? 'inperson' : 'phone'
   const lang = settings.value.uiLanguage === 'en' ? 'en' : 'he'
@@ -71,9 +81,9 @@ async function makeMeeting(rec: CloudRecording, wavPath: string): Promise<string
     cloudRecordingId: rec.id
   }
   writeMeta(folder, meta)
-  // The decoded audio becomes the meeting's raw recording, as if it had been recorded here.
-  const wav = readFileSync(wavPath)
-  writeFileSync(join(folder, '.raw', 'mic.pcm'), wav.subarray(44))
+  // The decoded audio becomes the meeting's raw recording, as if it had been recorded here (no copy in memory).
+  mkdirSync(join(folder, '.raw'), { recursive: true })
+  movePcm(pcmPath, join(folder, '.raw', 'mic.pcm'))
   // In person: the speakers are told apart (Nemotron + voiceprints) before the meeting counts as done.
   if (!(await transcribeSaved(folder, meta, ['mic'], { speakers: true }))) {
     const why = meta.error ?? 'transcription failed'
@@ -111,6 +121,11 @@ export const puller = new RecordingsPuller({
     if (r.status === 404 || r.status === 409 || r.status === 410) return false // gone, or taken by another computer
     throw new Error(`the Worker answered ${r.status} to claim`)
   },
+  release: async (id) => {
+    // An older Worker has no /release (404): its claim just expires after 30 minutes.
+    const r = await cloudRequest('POST', `/api/recordings/${encodeURIComponent(id)}/release`, { body: '{}' })
+    if (!r.ok && r.status !== 404) throw new Error(`the Worker answered ${r.status} to release`)
+  },
   download: async (id) => {
     const r = await cloudRequest('GET', `/api/recordings/${encodeURIComponent(id)}/audio`, { timeoutMs: 15 * 60_000 })
     if (!r.ok) throw new Error(`the Worker answered ${r.status} to the download`)
@@ -123,11 +138,14 @@ export const puller = new RecordingsPuller({
     return { bytes, contentType: r.headers.get('content-type') }
   },
   decode: async (rec, bytes) => {
-    const pcm = await decodeToPcm16k(bytes)
-    if (pcm.length < 32000) throw new Error('the recording is shorter than a second')
+    // Straight to raw 16 kHz PCM on disk (the format of .raw/mic.pcm), which makeMeeting then moves into place.
     mkdirSync(TMP_DIR, { recursive: true })
-    const path = join(TMP_DIR, `phone-${rec.id.replace(/[^A-Za-z0-9_-]/g, '_')}.wav`)
-    writeFileSync(path, Buffer.concat([Buffer.from(wavHeader(pcm.length)), pcm]))
+    const path = join(TMP_DIR, `phone-${rec.id.replace(/[^A-Za-z0-9_-]/g, '_')}.pcm`)
+    const samples = await decodeToPcmFile(bytes, path)
+    if (samples < 16000) {
+      rmSync(path, { force: true })
+      throw new Error('the recording is shorter than a second')
+    }
     return path
   },
   findLocal,
@@ -136,8 +154,8 @@ export const puller = new RecordingsPuller({
     if (folder) void shell.trashItem(folder).catch(() => undefined)
     db().removeMeeting(meetingId)
   },
-  transcribe: async (rec, wavPath) => {
-    const id = await makeMeeting(rec, wavPath)
+  transcribe: async (rec, pcmPath) => {
+    const id = await makeMeeting(rec, pcmPath)
     const title = readMeta(folderOf(id) ?? '')?.title ?? rec.title ?? ''
     notifyImported(id, title)
     return id
@@ -147,7 +165,7 @@ export const puller = new RecordingsPuller({
     const r = await cloudRequest('DELETE', `/api/recordings/${encodeURIComponent(id)}`)
     if (!r.ok && r.status !== 404) throw new Error(`the Worker answered ${r.status} to delete`)
   },
-  cleanup: (wavPath) => rmSync(wavPath, { force: true }),
+  cleanup: (pcmPath) => rmSync(pcmPath, { force: true }),
   loadPending: (): PendingCleanup[] => {
     try {
       const list = JSON.parse(readFileSync(PENDING_FILE, 'utf8'))

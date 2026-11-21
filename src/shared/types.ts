@@ -295,7 +295,7 @@ export interface PreflightReport {
 }
 
 export interface HealthItem {
-  id: 'app' | 'helper' | 'engine' | 'models' | 'transcribe' | 'speakers' | 'microphone' | 'permissions' | 'calendar' | 'claude' | 'storage'
+  id: 'app' | 'helper' | 'engine' | 'models' | 'transcribe' | 'speakers' | 'microphone' | 'permissions' | 'calendar' | 'claude' | 'cloud' | 'storage'
   status: 'ok' | 'warn' | 'fail' | 'skip' | 'running'
   /** A short code for the message (strings.ts: health.<id>.<code>). */
   code?: string

@@ -2,6 +2,8 @@ import { safeStorage } from 'electron'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { toMarkdown } from '@shared/transcript'
+import { fitMeetingPayload } from './cloudPayload'
+import { MeetingGoneError } from './recordingsPull'
 import { dataDir } from './paths'
 import { settings } from './settings'
 import { db } from './storage/db'
@@ -39,10 +41,20 @@ export function saveSecret(file: string, value: string): void {
   writeFileSync(file, safeStorage.encryptString(value.trim()), { mode: 0o600 })
 }
 
+/**
+ * A secret file is there but the system won't decrypt it (e.g. the app was reinstalled or signed
+ * differently, or the keychain item is gone), so readSecret() quietly returns null.
+ */
+export function secretUnreadable(file: string): boolean {
+  return existsSync(file) && readSecret(file) === null
+}
+
 export interface CloudState {
   enabled: boolean
   url: string
   hasToken: boolean
+  /** The saved upload token can't be decrypted any more: sync and phone recordings stop until it is replaced. */
+  needsRelink: boolean
   lastSync?: string
   lastError?: string
 }
@@ -59,8 +71,23 @@ export function uploadToken(): string | null {
   return token()
 }
 
+/** Saves the upload token the Worker now expects (the one-click deploy, right after the upload). */
+export function saveUploadToken(value: string): void {
+  saveSecret(TOKEN_FILE, value)
+}
+
+/** Sync is on, or was set up on this computer (a token file exists). */
+export function cloudConfigured(): boolean {
+  return settings.value.cloudSync || existsSync(TOKEN_FILE)
+}
+
+/** The upload token file is there but can't be decrypted (shown in Settings and in the health check). */
+export function cloudNeedsRelink(): boolean {
+  return secretUnreadable(TOKEN_FILE)
+}
+
 export function cloudState(): CloudState {
-  return { enabled: settings.value.cloudSync, url: settings.value.cloudUrl, hasToken: !!token(), lastSync, lastError }
+  return { enabled: settings.value.cloudSync, url: settings.value.cloudUrl, hasToken: !!token(), needsRelink: cloudNeedsRelink(), lastSync, lastError }
 }
 
 function cleanUrl(url: string): string {
@@ -96,6 +123,7 @@ async function call(method: string, path: string, body?: unknown): Promise<Respo
 /** One authenticated request to the user's Worker (Bearer upload token, no redirects). */
 export async function cloudRequest(method: string, path: string, opts: { body?: string; timeoutMs?: number } = {}): Promise<Response> {
   const t = token()
+  if (!t && cloudNeedsRelink()) throw new Error('The cloud token saved on this computer can no longer be read. Set up the cloud again in Settings > Cloud.')
   if (!t || !settings.value.cloudUrl) throw new Error('Cloudflare sync is not set up')
   return fetch(settings.value.cloudUrl + path, {
     method,
@@ -136,24 +164,41 @@ export async function checkCloud(): Promise<CloudState> {
   return cloudState()
 }
 
-async function upload(id: string): Promise<void> {
+/**
+ * Uploads a finished meeting. Not `strict` (sync after a save): a missing or unfinished meeting is skipped.
+ * `strict` (uploadNow, for phone recordings): rejects instead, with MeetingGoneError when the meeting was
+ * deleted here, so the cloud recording is never deleted as if its transcript had been uploaded.
+ */
+async function upload(id: string, strict = false): Promise<void> {
   const folder = db().getFolder(id)
   const m = folder ? readMeeting(folder) : null
-  if (!m || m.meta.status !== 'done') return
+  if (!m) {
+    if (strict) throw new MeetingGoneError(id)
+    return
+  }
+  if (m.meta.status !== 'done') {
+    if (strict) throw new Error(`meeting ${id} is not finished yet (${m.meta.status})`)
+    return
+  }
   const meta = m.meta
   const people = (meta.attendees ?? []).filter((a) => !a.isMe).map((a) => a.name || a.email)
-  const r = await call('POST', '/api/meetings', {
-    id: meta.id,
-    title: meta.title,
-    startedAt: meta.startedAt,
-    durationSec: meta.durationSec ?? 0,
-    source: meta.source,
-    participants: people.length ? people : meta.inferredParticipants ?? [],
-    scope: meta.scope ?? null,
-    calendarTitle: meta.calendarEvent?.title ?? null,
-    transcript: toMarkdown(meta, m.segments, settings.value.userName).slice(0, 1_900_000),
-    summary: m.summary
-  })
+  // Cut to what one D1 row holds, in bytes (Hebrew is 2 bytes a letter): a longer body would get 413 forever.
+  const body = fitMeetingPayload(
+    {
+      id: meta.id,
+      title: meta.title,
+      startedAt: meta.startedAt,
+      durationSec: meta.durationSec ?? 0,
+      source: meta.source,
+      participants: people.length ? people : meta.inferredParticipants ?? [],
+      scope: meta.scope ?? null,
+      calendarTitle: meta.calendarEvent?.title ?? null,
+      transcript: toMarkdown(meta, m.segments, settings.value.userName),
+      summary: m.summary ?? null
+    },
+    settings.value.uiLanguage === 'en' ? 'en' : 'he'
+  )
+  const r = await call('POST', '/api/meetings', body)
   if (!r.ok) throw new Error(`upload ${id}: ${r.status}`)
 }
 
@@ -184,7 +229,7 @@ export function queueCloud(id: string): void {
  */
 export function uploadNow(id: string): Promise<void> {
   const done = chain.then(async () => {
-    await upload(id)
+    await upload(id, true)
     lastSync = new Date().toISOString()
     lastError = undefined
   })

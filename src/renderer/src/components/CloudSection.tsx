@@ -26,6 +26,10 @@ interface CloudState {
   hasApiToken: boolean
   hasConnector: boolean
   hasPhoneLink: boolean
+  /** The saved upload token can no longer be decrypted (src/main/cloud.ts: cloudNeedsRelink). */
+  needsRelink?: boolean
+  /** All three Worker tokens are on this computer, so an existing Worker can be updated keeping them. */
+  canKeepTokens?: boolean
   phone: { supported: boolean | null; busy: boolean; lastCheck?: string; lastImport?: string; imported: number; lastError?: string }
   tokenUrl: string
 }
@@ -213,6 +217,7 @@ export function CloudSection() {
   const [asking, setAsking] = useState<Kind | null>(null) // update/rotate waiting for a pasted key
   const [msg, setMsg] = useState<{ text: string; error: boolean } | null>(null)
   const [working, setWorking] = useState(false)
+  const [exists, setExists] = useState(false) // a first setup found the Worker already in the account
 
   const refresh = async (): Promise<void> => {
     const s = await invoke<CloudState>('cloud:state')
@@ -231,22 +236,29 @@ export function CloudSection() {
     return base + at
   }
 
-  const go = async (k: Kind): Promise<void> => {
+  const go = async (k: Kind, o: { replaceExisting?: boolean } = {}): Promise<void> => {
     setWorking(true)
     setMsg(null)
     setKind(k)
     setSteps({})
+    setExists(false)
     try {
       const channel = k === 'deploy' ? 'cloud:deploy' : k === 'update' ? 'cloud:updateWorker' : 'cloud:rotatePhone'
       const pasted = token.trim()
-      const r = await invoke<Outcome>(channel, { apiToken: pasted || undefined, keepToken: pasted ? keep : undefined, accountId: account || undefined })
+      const r = await invoke<Outcome>(channel, { apiToken: pasted || undefined, keepToken: pasted ? keep : undefined, accountId: account || undefined, replaceExisting: o.replaceExisting === true })
       if (!r.ok) {
+        // The Worker is already there (another computer, or an earlier setup): new tokens would cut off whatever
+        // uses the current ones, so ask first, and offer an update that keeps this computer's tokens when it has them.
+        if (r.error.code === 'workerExists') {
+          setExists(true)
+          return
+        }
         if (r.error.code === 'chooseAccount' && r.error.accounts?.length) {
           setAccounts(r.error.accounts)
           setAccount(r.error.accounts[0].id)
         }
         // A key the update needs but doesn't have: ask for one right here.
-        if (k !== 'deploy' && (r.error.code === 'badToken' || r.error.code === 'permission') && !st?.hasApiToken) setAsking(k)
+        if (k !== 'deploy' && (r.error.code === 'badToken' || r.error.code === 'permission' || r.error.code === 'wrongAccount')) setAsking(k)
         setMsg({ text: explain(r.error), error: r.error.code !== 'chooseAccount' })
         return
       }
@@ -292,6 +304,9 @@ export function CloudSection() {
   }
 
   if (!st) return null
+  const relink = st.needsRelink && (
+    <div className="flex items-start gap-2 text-[12px] leading-relaxed text-rec"><CircleAlert size={14} className="mt-0.5 shrink-0" /> {t('cf.needsRelink')}</div>
+  )
   const time = (iso?: string): string => (iso ? new Date(iso).toLocaleString(i18n.language === 'he' ? 'he-IL' : 'en-GB', { dateStyle: 'short', timeStyle: 'short' }) : t('cf.never'))
   const status = msg && <div className={cn('text-[12px] leading-relaxed', msg.error ? 'text-rec' : 'text-ink-2')}>{msg.text}</div>
 
@@ -339,7 +354,18 @@ export function CloudSection() {
         <Button size="sm" variant="primary" disabled={working || !token.trim()} onClick={() => void go('deploy')}>{accounts ? t('cf.continue') : t('cf.deploy')}</Button>
         <Button size="sm" variant="ghost" disabled={working} onClick={() => { setWizard(false); setToken(''); setAccounts(null); setKind(null); setMsg(null) }}>{t('cf.cancel')}</Button>
       </div>
-      {kind === 'deploy' && Object.keys(steps).length > 0 && <Progress kind="deploy" steps={steps} />}
+      {exists && (
+        <div className="flex flex-col gap-2 rounded-[10px] border border-line bg-panel px-3 py-2.5">
+          <div className="flex items-start gap-2 text-[12.5px] leading-relaxed"><CircleAlert size={14} className="mt-0.5 shrink-0 text-warn" /> {t('cf.err.workerExists')}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            {st.canKeepTokens && (
+              <Button size="sm" variant="primary" disabled={working} onClick={() => void go('update')}>{t('cf.existsKeep')}</Button>
+            )}
+            <Button size="sm" variant={st.canKeepTokens ? 'ghost' : 'danger'} disabled={working} onClick={() => window.confirm(t('cf.existsReplaceConfirm')) && void go('deploy', { replaceExisting: true })}>{t('cf.existsReplace')}</Button>
+          </div>
+        </div>
+      )}
+      {(kind === 'deploy' || kind === 'update') && Object.keys(steps).length > 0 && <Progress kind={kind} steps={steps} />}
       {status}
     </div>
   )
@@ -349,6 +375,7 @@ export function CloudSection() {
     return (
       <div className="flex flex-col gap-3 px-4 py-3.5">
         <div className="text-[12.5px] leading-relaxed text-ink-2">{t('cf.intro')}</div>
+        {relink}
         {(st.deployed || st.hasToken) && st.url && (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[12px] text-ink-2">{t('cf.off')}</span>
@@ -378,11 +405,17 @@ export function CloudSection() {
   return (
     <div className="flex flex-col gap-4 px-4 py-3.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px]">
-        <span className="flex items-center gap-1.5 font-medium"><StatusDot tone={st.lastError ? 'warn' : 'ok'} /> {t('cf.connected')}</span>
+        <span className="flex items-center gap-1.5 font-medium"><StatusDot tone={st.lastError || st.needsRelink ? 'warn' : 'ok'} /> {t('cf.connected')}</span>
         {st.accountName && <span className="text-ink-2">{t('cf.account')}: {st.accountName}</span>}
         <span className="text-ink-3">{t('cf.lastSync')}: {time(st.lastSync)}</span>
       </div>
-      {st.lastError && <div className="text-[12px] text-rec">{st.lastError}</div>}
+      {relink}
+      {st.lastError && !st.needsRelink && <div className="text-[12px] text-rec">{st.lastError}</div>}
+      {st.needsRelink && (wizard ? setup : (
+        <div>
+          <Button size="sm" variant="primary" icon={<Cloud size={14} />} onClick={() => { setWizard(true); setMsg(null) }}>{t('cf.autoSetup')}</Button>
+        </div>
+      ))}
 
       {links.connector && (
         <div className="flex flex-col gap-1.5">
@@ -442,7 +475,7 @@ export function CloudSection() {
           </div>
         </div>
       )}
-      {kind && kind !== 'deploy' && Object.keys(steps).length > 0 && <Progress kind={kind} steps={steps} />}
+      {kind && kind !== 'deploy' && !wizard && Object.keys(steps).length > 0 && <Progress kind={kind} steps={steps} />}
       {status}
 
       {st.hasApiToken && (

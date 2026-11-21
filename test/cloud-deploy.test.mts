@@ -34,8 +34,9 @@ function fake(routes: (c: Call) => ReturnType<typeof ok> | undefined, over: Part
   return { deps, calls, progress }
 }
 
-function happy(c: Call, opts: { subdomain?: string | null; db?: boolean } = {}) {
+function happy(c: Call, opts: { subdomain?: string | null; db?: boolean; scripts?: string[] } = {}) {
   const p = c.url.replace('https://api.cloudflare.com/client/v4', '')
+  if (p === `/accounts/${ACC}/workers/scripts` && c.method === 'GET') return ok((opts.scripts ?? []).map((id) => ({ id })))
   if (p === '/user/tokens/verify') return ok({ status: 'active' })
   if (p.startsWith('/accounts?')) return ok([{ id: ACC, name: 'Klara' }])
   if (p.startsWith(`/accounts/${ACC}/d1/database?`)) return ok(opts.db ? [{ uuid: 'db-1', name: 'klara-wisper' }] : [])
@@ -88,7 +89,7 @@ test('deploy: steps in order, request shapes, three different secrets', async ()
   const meta = JSON.parse(/name="metadata"[^\n]*\r\nContent-Type: application\/json\r\n\r\n(.*)\r\n/.exec(body)![1])
   assert.equal(meta.main_module, 'worker.js')
   assert.deepEqual(meta.observability, { enabled: false })
-  assert.deepEqual(meta.bindings.find((b: any) => b.type === 'd1'), { type: 'd1', name: 'DB', id: 'db-new' })
+  assert.deepEqual(meta.bindings.find((b: any) => b.type === 'd1'), { type: 'd1', name: 'DB', database_id: 'db-new', id: 'db-new' })
   assert.deepEqual(meta.bindings.filter((b: any) => b.type === 'secret_text').map((b: any) => b.name), ['KLARA_TOKEN', 'KLARA_MCP_TOKEN', 'KLARA_REC_TOKEN'])
   assert.match(body, /Content-Type: application\/javascript\+module\r\n\r\nexport default \{\}/)
   assert.deepEqual(JSON.parse(String(calls.find((c) => c.url.endsWith('/klara-wisper-gateway/subdomain'))!.body)), { enabled: true, previews_enabled: false })
@@ -111,6 +112,27 @@ test('several accounts: asks which one, then uses the picked one', async () => {
   await assert.rejects(base(fake(multi).deps), (e: CfError) => e.code === 'chooseAccount' && e.accounts?.length === 2)
   const r = await base(fake(multi).deps, { accountId: ACC })
   assert.equal(r.accountId, ACC)
+})
+
+test("an update with a key from another account stops (wrongAccount) instead of building a second Worker there", async () => {
+  const B = 'b'.repeat(32)
+  const other = (c: Call) => (c.url.includes('/accounts?') ? ok([{ id: B, name: 'Other' }]) : happy(c))
+  const secrets = { upload: 'u'.repeat(64), mcp: 'm'.repeat(64), rec: 'r'.repeat(64) }
+  const f = fake(other)
+  await assert.rejects(base(f.deps, { secrets, accountId: ACC }), (e: CfError) => e.code === 'wrongAccount' && e.step === 'account')
+  assert.ok(!f.calls.some((c) => c.method !== 'GET'), 'nothing changed anywhere')
+  // A first setup with a stale remembered account just uses the one the key reaches.
+  const r = await base(fake((c) => (c.url.includes('/accounts?') ? ok([{ id: ACC, name: 'Klara' }]) : happy(c))).deps, { accountId: B })
+  assert.equal(r.accountId, ACC)
+})
+
+test('a workers.dev subdomain that is not a plain DNS label is refused before anything is uploaded or sent there', async () => {
+  for (const bad of ['evil.example/x#', 'a.b', 'UPPER', '-x']) {
+    const f = fake((c) => happy(c, { subdomain: bad }))
+    await assert.rejects(base(f.deps), (e: CfError) => e.step === 'subdomain' && /unexpected/.test(e.detail ?? ''), bad)
+    assert.ok(!f.calls.some((c) => c.method === 'PUT' && c.url.includes('/scripts/')), `${bad}: nothing uploaded`)
+    assert.ok(!f.calls.some((c) => c.url.includes('/api/health')), `${bad}: nothing sent to it`)
+  }
 })
 
 test('missing permission is named; failure stops the deploy', async () => {
@@ -146,4 +168,37 @@ test('schema.sql goes to D1 without comments (apostrophes in comments stay out o
   assert.ok(!clean.includes('--'))
   assert.match(clean, /CREATE TABLE IF NOT EXISTS meetings/)
   assert.equal(stripSqlComments("a TEXT DEFAULT '--x', -- the page's id\n\n-- only a comment\nb INT;"), "a TEXT DEFAULT '--x',\nb INT;")
+})
+
+test('all three secrets are handed over right after the upload, before the route and health steps can fail', async () => {
+  const order: string[] = []
+  let saved: { upload: string; mcp: string; rec: string } | null = null
+  const { deps } = fake((c) => {
+    order.push(`${c.method} ${c.url.replace(/^https:\/\/[^/]+/, '')}`)
+    if (c.url.endsWith('/klara-wisper-gateway/subdomain')) return fail(500, 10013, 'internal error')
+    return happy(c)
+  })
+  await assert.rejects(
+    base(deps, { onUploaded: (s: { upload: string; mcp: string; rec: string }) => { saved = s; order.push('saved') } }),
+    (e: CfError) => e.step === 'route'
+  )
+  assert.ok(saved, 'secrets were saved')
+  const s = saved as unknown as { upload: string; mcp: string; rec: string }
+  assert.ok(s.upload && s.mcp && s.rec, 'all three, the upload token too')
+  assert.equal(new Set([s.upload, s.mcp, s.rec]).size, 3)
+  const up = order.findIndex((x) => x.startsWith('PUT') && x.includes('/scripts/'))
+  assert.equal(order[up + 1], 'saved', 'saved straight after the upload')
+})
+
+test('a first setup that finds the Worker already there stops with workerExists, uploading nothing; replaceExisting goes ahead', async () => {
+  const a = fake((c) => happy(c, { scripts: ['other-worker', 'klara-wisper-gateway'] }))
+  await assert.rejects(base(a.deps), (e: CfError) => e.code === 'workerExists' && e.step === 'secrets')
+  assert.ok(!a.calls.some((c) => c.method === 'PUT'), 'nothing changed in the account')
+  const b = fake((c) => happy(c, { scripts: ['klara-wisper-gateway'] }))
+  const r = await base(b.deps, { replaceExisting: true })
+  assert.equal(r.healthy, true)
+  assert.ok(!b.calls.some((c) => c.method === 'GET' && c.url.endsWith('/workers/scripts')), 'no need to look')
+  // An update (keeping tokens) never asks either.
+  const u = fake((c) => happy(c, { db: true, scripts: ['klara-wisper-gateway'] }))
+  await base(u.deps, { secrets: { upload: 'u'.repeat(64), mcp: 'm'.repeat(64), rec: 'r'.repeat(64) } })
 })

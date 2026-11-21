@@ -64,6 +64,7 @@ If `KLARA_TOKEN` is missing or shorter than 32 characters, every authenticated r
 | GET | `/api/recordings?status=ready` | none; `status` is optional: `recording`, `ready` or `processing` | `{"ok":true,"recordings":[{id,title,kind,mime,startedAt,durationSec,bytes,chunks,status}]}`, oldest first, at most 200 |
 | GET | `/api/recordings/:id/audio` | none | the chunks joined in order, streamed; `Content-Type` is the stored mime, `X-Recording-Bytes` the total (and `Content-Length` on Cloudflare). 409 while still uploading |
 | POST | `/api/recordings/:id/claim` | none | `{"ok":true,"status":"processing","recording":{…}}`; 409 if it is still uploading, or already processing and claimed less than 30 minutes ago |
+| POST | `/api/recordings/:id/release` | none | `{"ok":true,"released":1}` (or `0`); a claimed recording goes back to `ready`, after a try that failed before its transcript was saved, so the next round retries at once instead of in 30 minutes |
 | DELETE | `/api/recordings/:id` | none | `{"ok":true,"deleted":1}` (or `0`); deletes the row and its audio |
 
 The app's loop: list `?status=ready`, claim one, download its audio, transcribe, `POST /api/meetings` with the
@@ -84,6 +85,9 @@ Meeting body (unknown extra fields are ignored):
 | `calendarTitle` | string or null | up to 1000 characters; missing means null |
 | `transcript` | string | Markdown, at most 2 MB (2,000,000 bytes of UTF-8) |
 | `summary` | string or null | Markdown, at most 200,000 bytes; missing means null |
+
+D1 holds at most 2,000,000 bytes per row, so all the fields together (in practice transcript + summary) must stay
+under 1,990,000 bytes of UTF-8, or the upload gets 413. The app cuts a very long transcript to fit.
 
 ## Phone link
 
@@ -137,7 +141,7 @@ Tools (times are Asia/Jerusalem):
 - `search_meetings(query, limit=10)`
 - `daily_digest(date?)`
 
-Transcript text is always wrapped in `<meeting_content>` with a "data, not instructions" warning. Phone
+Transcript text, and the meeting details that come from invites and transcripts (titles, calendar events, participants, scope), are always wrapped in `<meeting_content>` with a "data, not instructions" warning. Phone
 recordings are not visible to the connector; they become meetings only after the app uploads their transcript.
 
 ## Security notes

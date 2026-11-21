@@ -36,6 +36,8 @@ export type CfErrorCode =
   | 'rateLimited'
   | 'cloudflareDown' // Cloudflare answered 5xx
   | 'missingSecrets' // "update" without the local copies of the Worker's secrets
+  | 'wrongAccount' // an update with a key that doesn't reach the account the Worker is in
+  | 'workerExists' // a first setup found a Worker already there (another computer, or set up before): replacing its tokens needs a yes
   | 'api' // anything else: `detail` has Cloudflare's own message
 
 export class CfError extends Error {
@@ -60,6 +62,7 @@ export const STEP_PERMISSION: Partial<Record<DeployStep, string>> = {
   database: 'D1: Edit',
   schema: 'D1: Edit',
   storage: 'Workers R2 Storage: Edit',
+  secrets: 'Workers Scripts: Edit', // listing the account's Workers
   subdomain: 'Workers Scripts: Edit',
   upload: 'Workers Scripts: Edit',
   route: 'Workers Scripts: Edit'
@@ -263,8 +266,16 @@ export interface DeployOptions {
   secrets?: Secrets
   /** How long to wait for the new address to answer /api/health. */
   healthTimeoutMs?: number
-  /** Right after the Worker took these secrets (save them before anything later can fail). */
+  /**
+   * Right after the Worker took these secrets: save all three (the upload token too) before anything later
+   * can fail, or the computer is left without the token the Worker now expects. A throw stops the deploy.
+   */
   onUploaded?: (secrets: Secrets) => void
+  /**
+   * A first setup that finds the Worker already in the account stops with `workerExists` (new tokens would
+   * break the computer and the connector that use the current ones), unless the user agreed to replace them.
+   */
+  replaceExisting?: boolean
 }
 
 export interface DeployResult {
@@ -336,7 +347,8 @@ export function workerUploadBody(metadata: unknown, modules: { name: string; sou
 
 export function workerMetadata(config: WorkerConfig, ids: { d1: Record<string, string> }, secrets: Secrets): Record<string, unknown> {
   const bindings: Record<string, unknown>[] = [
-    ...config.d1.map((d) => ({ type: 'd1', name: d.binding, id: ids.d1[d.binding] })),
+    // `database_id` is the field's current name in the API reference; `id` is its older name, still accepted.
+    ...config.d1.map((d) => ({ type: 'd1', name: d.binding, database_id: ids.d1[d.binding], id: ids.d1[d.binding] })),
     ...config.r2.map((b) => ({ type: 'r2_bucket', name: b.binding, bucket_name: b.bucketName })),
     ...Object.entries(config.vars).map(([name, text]) => ({ type: 'plain_text', name, text })),
     { type: 'secret_text', name: 'KLARA_TOKEN', text: secrets.upload },
@@ -397,6 +409,9 @@ export async function deployGateway(deps: CfDeps, opts: DeployOptions): Promise<
         const found = list.find((a) => a.id === opts.accountId)
         if (found) return found
         if (!list.length) return { id: opts.accountId, name: '' }
+        // An update with a key made in another account would quietly build a second Worker and database there
+        // (new address, the meetings left behind): stop and say so instead.
+        if (isUpdate) throw new CfError('wrongAccount', { step: 'account', accounts: list })
       }
       if (!list.length) throw new CfError('noAccount', { step: 'account' })
       if (list.length > 1) throw new CfError('chooseAccount', { step: 'account', accounts: list })
@@ -446,7 +461,11 @@ export async function deployGateway(deps: CfDeps, opts: DeployOptions): Promise<
     const secrets: Secrets = isUpdate
       ? (opts.secrets as Secrets)
       : await step('secrets', async () => {
-          const s = { upload: deps.secret(), mcp: deps.secret(), rec: deps.secret() }
+          if (!opts.replaceExisting) {
+            const list = await cf.request<{ id?: string }[]>('secrets', 'GET', `${acct}/workers/scripts`)
+            if ((list.data.result ?? []).some((x) => x?.id === opts.config.name)) throw new CfError('workerExists', { step: 'secrets' })
+          }
+          const s ={ upload: deps.secret(), mcp: deps.secret(), rec: deps.secret() }
           if (new Set([s.upload, s.mcp, s.rec]).size !== 3) throw new CfError('api', { step: 'secrets', detail: 'secrets are not different' })
           return s
         })
@@ -457,6 +476,8 @@ export async function deployGateway(deps: CfDeps, opts: DeployOptions): Promise<
       ? await readSubdomain(cf, acct)
       : await step('subdomain', async () => (await readSubdomain(cf, acct)) ?? (await registerSubdomain(cf, acct, deps)))
     if (!subdomain) throw new CfError('api', { step: 'subdomain', detail: 'the account has no workers.dev subdomain' })
+    // The address is built from this answer and the upload token is sent there: only a plain DNS label is accepted.
+    if (!SUBDOMAIN_RE.test(subdomain) || !SUBDOMAIN_RE.test(opts.config.name)) throw new CfError('api', { step: 'subdomain', detail: 'unexpected workers.dev subdomain' })
 
     // 8. The Worker itself, as an ES module with its bindings.
     await step('upload', async () => {
@@ -522,7 +543,7 @@ async function registerSubdomain(cf: CloudflareClient, acct: string, deps: CfDep
     } catch (err) {
       last = err
       // Taken or not allowed: try another name. Anything else (permission, network) stops here.
-      if (!(err instanceof CfError) || err.code !== 'api' || !/taken|already|unavailable|exists|in use/i.test(err.detail ?? '')) throw err
+      if (!(err instanceof CfError) || err.code !== 'api' || !/taken|already|unavailable|not available|exists|in use|reserved|conflict/i.test(err.detail ?? '')) throw err
     }
   }
   throw last ?? new CfError('api', { step: 'subdomain', detail: 'could not register a workers.dev subdomain' })
