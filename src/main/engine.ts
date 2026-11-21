@@ -80,6 +80,8 @@ export class Engine extends EventEmitter {
     proc.on('exit', (code) => {
       this.ws = null
       this.proc = null
+      // Sessions die with the process: anyone waiting for a reply gives up now, not after a timeout.
+      this.emit('exited', code)
       if (this.stopping) return
       console.error(`engine exited (${code})`)
       this.setStatus({ state: 'error', error: `engine exited (${code})` })
@@ -185,11 +187,17 @@ export class Engine extends EventEmitter {
         clearTimeout(timer)
         timer = setTimeout(fail, idleMs)
       }
+      const onExit = (): void => {
+        cleanup()
+        reject(new Error(`no ${type}: the engine stopped`))
+      }
       const cleanup = (): void => {
         clearTimeout(timer)
         this.off('message', onMsg)
+        this.off('exited', onExit)
       }
       this.on('message', onMsg)
+      this.once('exited', onExit)
     })
   }
 
@@ -205,11 +213,17 @@ export class Engine extends EventEmitter {
         cleanup()
         reject(new Error(`timeout waiting for ${type}`))
       }, timeoutMs)
+      const onExit = (): void => {
+        cleanup()
+        reject(new Error(`no ${type}: the engine stopped`))
+      }
       const cleanup = (): void => {
         clearTimeout(timer)
         this.off(type, onMsg)
+        this.off('exited', onExit)
       }
       this.on(type, onMsg)
+      this.once('exited', onExit)
     })
   }
 }

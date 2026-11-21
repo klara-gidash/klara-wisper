@@ -5,6 +5,7 @@ import { finalizer } from './meetings/finalize'
 import { recorder } from './meetings/recorder'
 import { settings } from './settings'
 import { modelReady, setup } from './setup'
+import { puller } from './phoneRecordings'
 
 /** The Whisper models one can pick on a Mac (keys of engine/klara_engine/models.py). */
 export const DEFAULT_ASR = 'whisper-ivrit-turbo'
@@ -80,7 +81,8 @@ let waiting: NodeJS.Timeout | null = null
 
 /** Restarting the engine mid-call would lose the live transcript: wait until no call is recording or finishing. */
 export function restartEngineWhenIdle(): void {
-  const idle = (): boolean => !recorder.live && finalizer.pending.size === 0
+  // Also not while a phone recording is being transcribed (its job would die with the engine).
+  const idle = (): boolean => !recorder.live && finalizer.pending.size === 0 && !puller.running
   if (waiting) return
   if (idle()) return engine.restart()
   waiting = setInterval(() => {

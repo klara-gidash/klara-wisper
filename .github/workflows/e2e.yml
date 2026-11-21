@@ -114,9 +114,12 @@ jobs:
       - name: Scenario ${{ matrix.scenario }}
         shell: pwsh
         timeout-minutes: 100
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          SCENARIO: ${{ matrix.scenario }}
         run: |
           # A tag like e2e-7-only-w2-call runs just that scenario (and no macOS jobs).
-          if ('${{ github.ref_name }}' -match '-only-(.+)$' -and $Matches[1] -ne '${{ matrix.scenario }}') { Write-Host 'not selected by the tag'; exit 0 }
+          if ($env:REF_NAME -match '-only-(.+)$' -and $Matches[1] -ne $env:SCENARIO) { Write-Host 'not selected by the tag'; exit 0 }
           $setup = (Resolve-Path 'installer\Klara Wisper Setup.exe').Path
           switch ('${{ matrix.scenario }}') {
             'w1-wizard'         { pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\ci\e2e\win-w1-wizard.ps1 -Setup $setup }

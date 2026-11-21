@@ -49,6 +49,7 @@ public sealed class AudioInput : IDisposable
     private long lastData = Environment.TickCount64;
     private volatile bool stopped = true;
     private int restartAttempt;
+    private long restartedAt;
 
     public AudioInput(MMDevice device, bool loopback)
     {
@@ -130,7 +131,9 @@ public sealed class AudioInput : IDisposable
             }
             try { old.Dispose(); } catch { /* already gone */ }
             c.StartRecording();
-            Interlocked.Exchange(ref restartAttempt, 0);
+            // The counter resets only once real audio has flowed for a few seconds (Feed): a device that
+            // stops again right after starting must not restart forever.
+            Interlocked.Exchange(ref restartedAt, Environment.TickCount64);
             Ipc.Log($"{(loopback ? "system audio" : "microphone")} capture on \"{deviceName}\" restarted (attempt {attempt})");
         }
         catch (Exception e)
@@ -167,7 +170,12 @@ public sealed class AudioInput : IDisposable
 
     private void Feed(byte[] data, int count, bool silence = false)
     {
-        if (!silence) Interlocked.Exchange(ref lastData, Environment.TickCount64);
+        if (!silence)
+        {
+            long now = Environment.TickCount64;
+            Interlocked.Exchange(ref lastData, now);
+            if (Volatile.Read(ref restartAttempt) > 0 && now - Interlocked.Read(ref restartedAt) > 3000) Interlocked.Exchange(ref restartAttempt, 0);
+        }
         lock (gate)
         {
             if (count > 0) buffered.AddSamples(data, 0, count);
