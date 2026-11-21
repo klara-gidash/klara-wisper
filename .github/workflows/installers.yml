@@ -130,5 +130,5 @@ jobs:
           # A new tag has no release yet: create it (the notes point to the install guide), then attach.
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "Klara Wisper ${TAG#v}" \
-              --notes "Installers for macOS (Apple Silicon) and Windows 10/11. Install guide: https://github.com/$GITHUB_REPOSITORY/blob/main/docs/INSTALL.he.md · Build & test: https://github.com/$GITHUB_REPOSITORY/blob/main/docs/BUILD-AND-TEST.md"
+              --notes "Mac: Klara.Wisper.pkg · Windows: Klara.Wisper.Setup.exe. Double-click, approve once (Mac: System Settings → Privacy & Security → Open Anyway; Windows: More info → Run anyway), then the guide inside the app does the rest. Features and how to install (Hebrew/English): https://klara-gidash.github.io/klara-wisper/"
           gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
