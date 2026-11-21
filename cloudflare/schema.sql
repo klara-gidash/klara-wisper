@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS recordings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings (status, started_at);
-CREATE INDEX IF NOT EXISTS idx_recordings_client_id ON recordings (client_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_recordings_client_id_unique ON recordings (client_id);
 
 CREATE TABLE IF NOT EXISTS recording_chunks (
   id   TEXT NOT NULL,     -- recordings.id

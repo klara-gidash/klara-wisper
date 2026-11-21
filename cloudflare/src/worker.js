@@ -55,7 +55,7 @@ const REC_STATUSES = new Set(["recording", "ready", "processing"]);
 
 const SOURCE_LABEL = {
   zoom: "Zoom", meet: "Google Meet", teams: "Teams", slack: "Slack Huddle", facetime: "FaceTime",
-  webex: "Webex", aircall: "Aircall", inperson: "in person", other: "Call",
+  webex: "Webex", aircall: "Aircall", inperson: "in person", phone: "phone recording", other: "Call",
 };
 
 const UNTRUSTED =
@@ -332,7 +332,6 @@ const RECORDING_DDL = [
      claimed_at   TEXT
    )`,
   "CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings (status, started_at)",
-  "CREATE INDEX IF NOT EXISTS idx_recordings_client_id ON recordings (client_id)",
   `CREATE TABLE IF NOT EXISTS recording_chunks (
      id   TEXT NOT NULL,
      seq  INTEGER NOT NULL,
@@ -346,11 +345,18 @@ const RECORDING_DDL = [
 const TABLES_READY = new WeakMap(); // D1 binding -> Promise, so it runs once per isolate
 const LAST_MAINTENANCE = new WeakMap(); // D1 binding -> ms
 
+// One row per page id, so two /start calls racing with the same clientId can't both insert. On its own: an older
+// database that already has a duplicate (only possible before this index) keeps working without it.
+const CLIENT_ID_INDEX = "CREATE UNIQUE INDEX IF NOT EXISTS idx_recordings_client_id_unique ON recordings (client_id)";
+
 function ensureRecordingTables(env) {
   const d = db(env);
   let ready = TABLES_READY.get(d);
   if (!ready) {
-    ready = runAll(d, RECORDING_DDL.map((sql) => d.prepare(sql)));
+    ready = runAll(d, RECORDING_DDL.map((sql) => d.prepare(sql))).then(async (out) => {
+      await d.prepare(CLIENT_ID_INDEX).run().catch((err) => logError("client_id index", err));
+      return out;
+    });
     ready.catch(() => TABLES_READY.delete(d));
     TABLES_READY.set(d, ready);
   }
@@ -490,13 +496,18 @@ async function recStart(request, env) {
   if (Number(usage?.total) >= recQuotaBytes(env)) throw storageFull(env);
   const id = `r_${randomHex(12)}`;
   const now = new Date().toISOString();
-  await d
+  // OR IGNORE: a start with the same clientId that won a race already made the row (unique index); answer with it.
+  const inserted = await d
     .prepare(
-      `INSERT INTO recordings (id, client_id, title, kind, mime, started_at, status, created_at, updated_at)
+      `INSERT OR IGNORE INTO recordings (id, client_id, title, kind, mime, started_at, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, 'recording', ?, ?)`,
     )
     .bind(id, clientId, title, b.kind, b.mime.trim(), new Date(b.startedAt).toISOString(), now, now)
     .run();
+  if (!changes(inserted) && clientId) {
+    const existing = await d.prepare("SELECT id FROM recordings WHERE client_id = ?").bind(clientId).first();
+    if (existing) return json({ ok: true, id: existing.id });
+  }
   return json({ ok: true, id });
 }
 
@@ -528,15 +539,46 @@ async function recChunk(request, env, url) {
   }
   if (Number(row.total) + bytes.byteLength > recQuotaBytes(env)) throw storageFull(env);
 
-  const inserted = await d
-    .prepare("INSERT INTO recording_chunks (id, seq, data) VALUES (?, ?, ?) ON CONFLICT (id, seq) DO NOTHING")
-    .bind(id, seq, bytes.buffer)
-    .run();
-  if (changes(inserted)) {
-    await d
-      .prepare("UPDATE recordings SET bytes = bytes + ?, chunks = MAX(chunks, ?), updated_at = ? WHERE id = ?")
-      .bind(bytes.byteLength, seq + 1, new Date().toISOString(), id)
-      .run();
+  // The checks above are a fast answer; these are the ones that count. The INSERT stores the chunk only if the
+  // recording is still open and both limits still hold, and the UPDATE recounts the bytes from the stored chunks.
+  // A batch is one D1 transaction, so two chunks arriving together can't both slip under a limit.
+  const n = bytes.byteLength;
+  const [inserted] = await runAll(d, [
+    d
+      .prepare(
+        `INSERT INTO recording_chunks (id, seq, data)
+         SELECT ?, ?, ? WHERE EXISTS (
+           SELECT 1 FROM recordings
+           WHERE id = ? AND status = 'recording' AND bytes + ? <= ?
+             AND (SELECT COALESCE(SUM(bytes), 0) FROM recordings) + ? <= ?)
+         ON CONFLICT (id, seq) DO NOTHING`,
+      )
+      .bind(id, seq, bytes.buffer, id, n, MAX_RECORDING_BYTES, n, recQuotaBytes(env)),
+    d
+      .prepare(
+        `UPDATE recordings SET bytes = (SELECT COALESCE(SUM(length(data)), 0) FROM recording_chunks WHERE id = ?),
+           chunks = (SELECT COALESCE(MAX(seq) + 1, 0) FROM recording_chunks WHERE id = ?), updated_at = ?
+         WHERE id = ? AND status = 'recording'`,
+      )
+      .bind(id, id, new Date().toISOString(), id),
+  ]);
+  if (!changes(inserted)) {
+    // Not stored: find out why (a retry that raced its twin, a finish, or a limit reached meanwhile).
+    const now = await d
+      .prepare(
+        `SELECT status, bytes, (SELECT COALESCE(SUM(bytes), 0) FROM recordings) AS total,
+                EXISTS (SELECT 1 FROM recording_chunks WHERE id = ? AND seq = ?) AS have
+         FROM recordings WHERE id = ?`,
+      )
+      .bind(id, seq, id)
+      .first();
+    if (!now) throw new HttpError(404, "unknown recording");
+    if (Number(now.have)) return json({ ok: true });
+    if (now.status !== "recording") throw new HttpError(409, "this recording is already finished");
+    if (Number(now.bytes) + n > MAX_RECORDING_BYTES) {
+      throw new HttpError(413, "this recording reached the 64 MB limit; stop it and start a new one");
+    }
+    throw storageFull(env);
   }
   return json({ ok: true });
 }
@@ -933,7 +975,7 @@ async function listMeetings(args, { env }) {
   }
   return (
     `${results.length} meeting(s) from the last ${days} days, newest first (Israel time):\n\n` +
-    results.map(describe).join("\n")
+    `${UNTRUSTED}\n<meeting_content>\n${fence(results.map(describe).join("\n"))}\n</meeting_content>`
   );
 }
 
@@ -957,7 +999,8 @@ async function getMeeting(args, { env }) {
     else if (/[\uD800-\uDBFF]/.test(transcript[end - 1])) end -= 1;
   }
 
-  const parts = [describe(row)];
+  // The details (title, calendar event, participants, scope) come from invites and transcripts too: data.
+  const parts = [`${UNTRUSTED}\n<meeting_content>\n${fence(describe(row))}\n</meeting_content>`];
   if (offset === 0) {
     parts.push(
       row.summary && row.summary.trim()

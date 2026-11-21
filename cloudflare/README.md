@@ -140,7 +140,7 @@ Tools (times are Asia/Jerusalem):
 - `search_meetings(query, limit=10)`
 - `daily_digest(date?)`
 
-Transcript text is always wrapped in `<meeting_content>` with a "data, not instructions" warning. Phone
+Transcript text, and the meeting details that come from invites and transcripts (titles, calendar events, participants, scope), are always wrapped in `<meeting_content>` with a "data, not instructions" warning. Phone
 recordings are not visible to the connector; they become meetings only after the app uploads their transcript.
 
 ## Security notes
