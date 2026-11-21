@@ -55,6 +55,19 @@ export function parseRecordingList(body: unknown): CloudRecording[] {
   return out.sort((a, b) => (a.startedAt ?? '').localeCompare(b.startedAt ?? ''))
 }
 
+/**
+ * The meeting made from a recording is gone here (the user deleted it before its cloud copy was cleaned up).
+ * Its recording is deleted in the cloud too, rather than transcribed again and the meeting brought back.
+ */
+export class MeetingGoneError extends Error {
+  readonly code = 'meeting-gone'
+  constructor(meetingId: string) {
+    super(`meeting ${meetingId} was deleted on this computer`)
+  }
+}
+
+export const isMeetingGone = (err: unknown): boolean => (err as { code?: unknown })?.code === 'meeting-gone'
+
 /** A transcript saved here whose recording isn't deleted in the cloud yet (kept across restarts). */
 export interface PendingCleanup {
   recordingId: string
@@ -146,13 +159,23 @@ export class RecordingsPuller {
   private async finishPending(report: PullReport): Promise<void> {
     for (const p of this.deps.loadPending()) {
       try {
-        await this.deps.upload(p.meetingId)
+        await this.uploadOrGone(p.meetingId, p.recordingId)
         await this.deps.remove(p.recordingId)
         this.dropPending(p.recordingId)
         report.cleaned.push(p.recordingId)
       } catch (err) {
         this.deps.log(`phone recording ${p.recordingId}: cleanup will be tried again (${(err as Error).message})`)
       }
+    }
+  }
+
+  /** Uploads the transcript; a meeting deleted here meanwhile counts as done (its recording goes too). */
+  private async uploadOrGone(meetingId: string, recordingId: string): Promise<void> {
+    try {
+      await this.deps.upload(meetingId)
+    } catch (err) {
+      if (!isMeetingGone(err)) throw err
+      this.deps.log(`phone recording ${recordingId}: its meeting was deleted here, so the recording is deleted in the cloud too`)
     }
   }
 
@@ -174,7 +197,7 @@ export class RecordingsPuller {
       if (local?.status === 'done') {
         // Transcribed before (e.g. the app quit before deleting it): only the cloud side is left.
         this.addPending({ recordingId: rec.id, meetingId: local.meetingId })
-        await d.upload(local.meetingId)
+        await this.uploadOrGone(local.meetingId, rec.id)
         await d.remove(rec.id)
         this.dropPending(rec.id)
         report.cleaned.push(rec.id)
@@ -193,7 +216,7 @@ export class RecordingsPuller {
       d.cleanup(wav)
       wav = null
       report.imported.push(meetingId)
-      await d.upload(meetingId)
+      await this.uploadOrGone(meetingId, rec.id)
       await d.remove(rec.id)
       this.dropPending(rec.id)
       this.failures.delete(rec.id)
@@ -210,7 +233,7 @@ export class RecordingsPuller {
 
 /** "הקלטה מהטלפון 14:05" (or the English one), at the recording's time in Israel. */
 export function phoneTitle(startedAt: string, lang: 'he' | 'en'): string {
-  const time = new Date(startedAt).toLocaleTimeString(lang === 'he' ? 'he-IL' : 'en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
+  const time = new Date(startedAt).toLocaleTimeString(lang === 'he' ? 'he-IL' : 'en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Jerusalem' })
   return lang === 'he' ? `הקלטה מהטלפון ${time}` : `Phone recording ${time}`
 }
 

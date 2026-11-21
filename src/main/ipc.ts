@@ -448,12 +448,13 @@ export function registerIpc(detector: Detector): void {
     return fullCloudState()
   })
   // One-click deploy to the user's own Cloudflare account (cloudDeploy.ts); results, never throws.
-  const cfOpts = (o: unknown): { apiToken?: string; keepToken?: boolean; accountId?: string } => {
+  const cfOpts = (o: unknown): { apiToken?: string; keepToken?: boolean; accountId?: string; replaceExisting?: boolean } => {
     const r = (o ?? {}) as Record<string, unknown>
     return {
       apiToken: typeof r.apiToken === 'string' ? r.apiToken.slice(0, 200) : undefined,
       keepToken: typeof r.keepToken === 'boolean' ? r.keepToken : undefined,
-      accountId: typeof r.accountId === 'string' && /^[0-9a-f]{32}$/i.test(r.accountId) ? r.accountId : undefined
+      accountId: typeof r.accountId === 'string' && /^[0-9a-f]{32}$/i.test(r.accountId) ? r.accountId : undefined,
+      replaceExisting: r.replaceExisting === true
     }
   }
   handle('cloud:deploy', (o: unknown) => deployCloud(cfOpts(o)))

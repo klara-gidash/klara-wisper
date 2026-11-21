@@ -4,7 +4,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   API_TOKEN_FILE, DEPLOY_FILE, MCP_TOKEN_FILE, REC_TOKEN_FILE,
-  cloudState, configureCloud, readSecret, saveSecret, uploadToken, type CloudState
+  cloudState, configureCloud, readSecret, saveSecret, saveUploadToken, uploadToken, type CloudState
 } from './cloud'
 import {
   CfError, connectorUrl, deployGateway, parseWranglerToml, phoneUrl, tokenTemplateUrl,
@@ -55,6 +55,8 @@ export interface FullCloudState extends CloudState {
   /** The connector and phone links can be shown (their tokens are on this computer). */
   hasConnector: boolean
   hasPhoneLink: boolean
+  /** All three of the Worker's tokens are on this computer, so it can be updated keeping them. */
+  canKeepTokens: boolean
   phone: PhoneState
   /** The token page link, pre-filled with the permissions the deploy needs. */
   tokenUrl: string
@@ -97,6 +99,7 @@ export function fullCloudState(): FullCloudState {
     hasApiToken: !!readSecret(API_TOKEN_FILE),
     hasConnector: !!base.url && !!readSecret(MCP_TOKEN_FILE),
     hasPhoneLink: !!base.url && !!readSecret(REC_TOKEN_FILE),
+    canKeepTokens: base.hasToken && !!readSecret(MCP_TOKEN_FILE) && !!readSecret(REC_TOKEN_FILE),
     phone: phoneState(),
     tokenUrl: tokenUrl()
   }
@@ -110,11 +113,18 @@ export function cloudLinks(): { connector: string | null; phone: string | null }
   return { connector: url && mcp ? connectorUrl(url, mcp) : null, phone: url && rec ? phoneUrl(url, rec) : null }
 }
 
+/** Saves the three tokens the Worker was just given (the deploy calls it right after the upload). */
+export function saveDeploySecrets(s: Secrets): void {
+  saveUploadToken(s.upload)
+  saveSecret(MCP_TOKEN_FILE, s.mcp)
+  saveSecret(REC_TOKEN_FILE, s.rec)
+}
+
 let running = false
 
 async function run(
   kind: 'deploy' | 'update' | 'rotate',
-  opts: { apiToken?: string; keepToken?: boolean; accountId?: string }
+  opts: { apiToken?: string; keepToken?: boolean; accountId?: string; replaceExisting?: boolean }
 ): Promise<DeployOutcome> {
   if (running) return { ok: false, error: { code: 'api', detail: 'busy' } }
   running = true
@@ -149,11 +159,11 @@ async function run(
         schemaSql: readFileSync(bundledFile('schema.sql'), 'utf8'),
         config: workerConfig(),
         secrets,
-        // The Worker has these secrets now: keep this computer's copies in step at once.
-        onUploaded: (s) => {
-          saveSecret(MCP_TOKEN_FILE, s.mcp)
-          saveSecret(REC_TOKEN_FILE, s.rec)
-        }
+        replaceExisting: kind === 'deploy' && opts.replaceExisting === true,
+        // The Worker has these secrets now: keep this computer's copies of all three in step at once, before
+        // the route and health steps (up to minutes) can fail or the app quit. Otherwise a re-deploy that stops
+        // there leaves the Worker expecting an upload token this computer doesn't have: every upload gets 401.
+        onUploaded: saveDeploySecrets
       }
     )
 
@@ -192,9 +202,9 @@ async function run(
   }
 }
 
-export const deployCloud = (opts: { apiToken?: string; keepToken?: boolean; accountId?: string }): Promise<DeployOutcome> => run('deploy', opts)
-export const updateCloudWorker = (opts: { apiToken?: string; keepToken?: boolean }): Promise<DeployOutcome> => run('update', opts)
-export const rotatePhoneLink = (opts: { apiToken?: string; keepToken?: boolean }): Promise<DeployOutcome> => run('rotate', opts)
+export const deployCloud = (opts: { apiToken?: string; keepToken?: boolean; accountId?: string; replaceExisting?: boolean }): Promise<DeployOutcome> => run('deploy', opts)
+export const updateCloudWorker = (opts: { apiToken?: string; keepToken?: boolean; accountId?: string }): Promise<DeployOutcome> => run('update', opts)
+export const rotatePhoneLink = (opts: { apiToken?: string; keepToken?: boolean; accountId?: string }): Promise<DeployOutcome> => run('rotate', opts)
 
 /** "Forget the Cloudflare key": updates will ask for a new one. */
 export function forgetApiToken(): FullCloudState {
