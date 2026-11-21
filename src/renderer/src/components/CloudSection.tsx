@@ -258,7 +258,7 @@ export function CloudSection() {
           setAccount(r.error.accounts[0].id)
         }
         // A key the update needs but doesn't have: ask for one right here.
-        if (k !== 'deploy' && (r.error.code === 'badToken' || r.error.code === 'permission') && !st?.hasApiToken) setAsking(k)
+        if (k !== 'deploy' && (r.error.code === 'badToken' || r.error.code === 'permission' || r.error.code === 'wrongAccount')) setAsking(k)
         setMsg({ text: explain(r.error), error: r.error.code !== 'chooseAccount' })
         return
       }

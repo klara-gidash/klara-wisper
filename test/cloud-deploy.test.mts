@@ -114,6 +114,27 @@ test('several accounts: asks which one, then uses the picked one', async () => {
   assert.equal(r.accountId, ACC)
 })
 
+test("an update with a key from another account stops (wrongAccount) instead of building a second Worker there", async () => {
+  const B = 'b'.repeat(32)
+  const other = (c: Call) => (c.url.includes('/accounts?') ? ok([{ id: B, name: 'Other' }]) : happy(c))
+  const secrets = { upload: 'u'.repeat(64), mcp: 'm'.repeat(64), rec: 'r'.repeat(64) }
+  const f = fake(other)
+  await assert.rejects(base(f.deps, { secrets, accountId: ACC }), (e: CfError) => e.code === 'wrongAccount' && e.step === 'account')
+  assert.ok(!f.calls.some((c) => c.method !== 'GET'), 'nothing changed anywhere')
+  // A first setup with a stale remembered account just uses the one the key reaches.
+  const r = await base(fake((c) => (c.url.includes('/accounts?') ? ok([{ id: ACC, name: 'Klara' }]) : happy(c))).deps, { accountId: B })
+  assert.equal(r.accountId, ACC)
+})
+
+test('a workers.dev subdomain that is not a plain DNS label is refused before anything is uploaded or sent there', async () => {
+  for (const bad of ['evil.example/x#', 'a.b', 'UPPER', '-x']) {
+    const f = fake((c) => happy(c, { subdomain: bad }))
+    await assert.rejects(base(f.deps), (e: CfError) => e.step === 'subdomain' && /unexpected/.test(e.detail ?? ''), bad)
+    assert.ok(!f.calls.some((c) => c.method === 'PUT' && c.url.includes('/scripts/')), `${bad}: nothing uploaded`)
+    assert.ok(!f.calls.some((c) => c.url.includes('/api/health')), `${bad}: nothing sent to it`)
+  }
+})
+
 test('missing permission is named; failure stops the deploy', async () => {
   const { deps, calls, progress } = fake((c) => (c.url.includes('/d1/database?') ? fail(403, 10000, 'Authentication error') : happy(c)))
   await assert.rejects(base(deps), (e: CfError) => e.code === 'permission' && e.perm === 'D1: Edit' && e.step === 'database')

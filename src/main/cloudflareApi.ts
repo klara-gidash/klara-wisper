@@ -36,6 +36,7 @@ export type CfErrorCode =
   | 'rateLimited'
   | 'cloudflareDown' // Cloudflare answered 5xx
   | 'missingSecrets' // "update" without the local copies of the Worker's secrets
+  | 'wrongAccount' // an update with a key that doesn't reach the account the Worker is in
   | 'workerExists' // a first setup found a Worker already there (another computer, or set up before): replacing its tokens needs a yes
   | 'api' // anything else: `detail` has Cloudflare's own message
 
@@ -408,6 +409,9 @@ export async function deployGateway(deps: CfDeps, opts: DeployOptions): Promise<
         const found = list.find((a) => a.id === opts.accountId)
         if (found) return found
         if (!list.length) return { id: opts.accountId, name: '' }
+        // An update with a key made in another account would quietly build a second Worker and database there
+        // (new address, the meetings left behind): stop and say so instead.
+        if (isUpdate) throw new CfError('wrongAccount', { step: 'account', accounts: list })
       }
       if (!list.length) throw new CfError('noAccount', { step: 'account' })
       if (list.length > 1) throw new CfError('chooseAccount', { step: 'account', accounts: list })
@@ -472,6 +476,8 @@ export async function deployGateway(deps: CfDeps, opts: DeployOptions): Promise<
       ? await readSubdomain(cf, acct)
       : await step('subdomain', async () => (await readSubdomain(cf, acct)) ?? (await registerSubdomain(cf, acct, deps)))
     if (!subdomain) throw new CfError('api', { step: 'subdomain', detail: 'the account has no workers.dev subdomain' })
+    // The address is built from this answer and the upload token is sent there: only a plain DNS label is accepted.
+    if (!SUBDOMAIN_RE.test(subdomain) || !SUBDOMAIN_RE.test(opts.config.name)) throw new CfError('api', { step: 'subdomain', detail: 'unexpected workers.dev subdomain' })
 
     // 8. The Worker itself, as an ES module with its bindings.
     await step('upload', async () => {
