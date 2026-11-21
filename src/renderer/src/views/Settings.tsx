@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { HotkeyName, MeetingSource, Settings as SettingsT } from '@shared/types'
 import { SOURCE_LABEL } from '@shared/types'
+import { CloudSection } from '../components/CloudSection'
 import { GoogleCalendarSection } from '../components/GoogleCalendarSection'
 import { IntegrationsSection } from '../components/IntegrationsSection'
 import { PermissionList } from '../components/Permissions'
@@ -89,65 +90,6 @@ function MacCard({ hw }: { hw: AsrChoices['hardware'] }) {
   )
 }
 
-interface CloudState {
-  enabled: boolean
-  url: string
-  hasToken: boolean
-  lastSync?: string
-  lastError?: string
-}
-
-/** Optional copy of transcripts + summaries to the user's own Cloudflare Worker, for Claude on the phone. */
-function CloudSection() {
-  const { t } = useTranslation()
-  const [st, setSt] = useState<CloudState | null>(null)
-  const [url, setUrl] = useState('')
-  const [token, setToken] = useState('')
-  const [msg, setMsg] = useState<string | null>(null)
-  const [working, setWorking] = useState(false)
-  useEffect(() => void invoke<CloudState>('cloud:state').then((s) => { setSt(s); setUrl(s.url) }), [])
-  const run = async (fn: () => Promise<unknown>, ok?: string): Promise<void> => {
-    setWorking(true)
-    setMsg(null)
-    try {
-      await fn()
-      setSt(await invoke<CloudState>('cloud:state'))
-      if (ok) setMsg(ok)
-    } catch (err) {
-      setMsg(String((err as Error).message ?? err).replace(/^Error: (Error invoking remote method '[^']+': )?(Error: )?/, ''))
-    } finally {
-      setWorking(false)
-    }
-  }
-  if (!st) return null
-  return (
-    <div className="flex flex-col gap-3 px-4 py-3.5">
-      <div className="text-[12.5px] leading-relaxed text-ink-2">{t('set.cloudHint')}</div>
-      <label className="flex flex-col gap-1 text-[12.5px] font-medium">
-        {t('set.cloudUrl')}
-        <input id="cloud-url" dir="ltr" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://klara-wisper-gateway.example.workers.dev"
-          className="rounded-[10px] border border-line bg-panel px-3 py-2 text-[13px] font-normal outline-none focus:border-accent" />
-      </label>
-      <label className="flex flex-col gap-1 text-[12.5px] font-medium">
-        {t('set.cloudToken')} {st.hasToken && <span className="font-normal text-ok">({t('set.cloudTokenSaved')})</span>}
-        <input id="cloud-token" dir="ltr" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="openssl rand -hex 32"
-          className="rounded-[10px] border border-line bg-panel px-3 py-2 text-[13px] font-normal outline-none focus:border-accent" />
-      </label>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="primary" disabled={working} onClick={() => void run(async () => {
-          await invoke('cloud:configure', { url, token: token || undefined, enabled: true }); setToken('')
-        }, t('set.cloudOn'))}>{st.enabled ? t('set.cloudSave') : t('set.cloudEnable')}</Button>
-        {st.enabled && <Button size="sm" disabled={working} onClick={() => void run(async () => { await invoke('cloud:syncAll') }, t('set.cloudQueued'))}>{t('set.cloudSyncAll')}</Button>}
-        {st.enabled && <Button size="sm" variant="ghost" disabled={working} onClick={() => void run(() => invoke('cloud:configure', { url, enabled: false }), t('set.cloudOff'))}>{t('set.cloudDisable')}</Button>}
-        {st.hasToken && <Button size="sm" variant="ghost" disabled={working} onClick={() => void run(() => invoke('cloud:forget'))}>{t('set.cloudForget')}</Button>}
-        {working && <Spinner />}
-      </div>
-      {(msg || st.lastError) && <div className={cn('text-[12px]', st.lastError && !msg ? 'text-rec' : 'text-ink-2')}>{msg ?? st.lastError}</div>}
-      {st.lastSync && <div className="text-[11.5px] text-ink-3">{t('set.cloudLast')}: {new Date(st.lastSync).toLocaleString()}</div>}
-    </div>
-  )
-}
-
 export function Settings() {
   const { t } = useTranslation()
   const app = useAppState()
@@ -219,7 +161,7 @@ export function Settings() {
     }
   }
 
-  const sources: Exclude<MeetingSource, 'inperson' | 'other'>[] = [
+  const sources: Exclude<MeetingSource, 'inperson' | 'phone' | 'other'>[] = [
     'zoom', 'meet', 'teams', 'slack', 'facetime', 'webex', 'aircall', 'whatsapp', 'telegram', 'discord', 'signal', 'messenger', 'goto'
   ]
   const physical = app.mic.devices.filter((d) => !d.virtual)
@@ -430,11 +372,9 @@ export function Settings() {
         </div>
       </Section>
 
-      {app.platform === 'darwin' && (
-        <Section title={t('set.cloud')}>
-          <CloudSection />
-        </Section>
-      )}
+      <Section title={t('set.cloud')}>
+        <CloudSection />
+      </Section>
 
       <Section title={t('set.integrations')}>
         <IntegrationsSection />

@@ -5,7 +5,7 @@ export type Stream = 'mic' | 'system'
 export type MeetingSource =
   | 'zoom' | 'meet' | 'teams' | 'slack' | 'facetime' | 'webex' | 'aircall'
   | 'whatsapp' | 'telegram' | 'discord' | 'signal' | 'messenger' | 'goto'
-  | 'inperson' | 'other'
+  | 'inperson' | 'phone' | 'other'
 export type RecordingMode = 'meeting' | 'inperson'
 export type HotkeyName = 'fn' | 'rightOption' | 'rightCommand' | 'rightControl'
 
@@ -83,6 +83,8 @@ export interface MeetingMeta {
   inferredParticipants?: string[] | null
   /** The past-meetings pass already looked for this meeting in the calendar. */
   calendarChecked?: boolean | number
+  /** Made from a recording on the phone: its id in the user's Cloudflare Worker (phoneRecordings.ts). */
+  cloudRecordingId?: string
 }
 
 /** A recent call worth a follow-up email (home screen). */
@@ -129,7 +131,7 @@ export interface Settings {
   userName: string
   hotkey: HotkeyName
   autoRecord: boolean
-  detect: Record<Exclude<MeetingSource, 'inperson' | 'other'>, boolean>
+  detect: Record<Exclude<MeetingSource, 'inperson' | 'phone' | 'other'>, boolean>
   micUid: string | null // null = automatic
   vocabulary: string[]
   folder: string
@@ -258,6 +260,7 @@ export const SOURCE_LABEL: Record<MeetingSource, string> = {
   messenger: 'Messenger',
   goto: 'GoTo',
   inperson: 'In person',
+  phone: 'Phone',
   other: 'Call'
 }
 

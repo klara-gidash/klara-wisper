@@ -36,6 +36,16 @@ export async function recoverInterrupted(activeId: string | null): Promise<void>
 }
 
 async function recoverOne(folder: string, meta: MeetingMeta, streams: string[]): Promise<void> {
+  await transcribeSaved(folder, meta, streams)
+}
+
+/**
+ * Transcribes a meeting folder's saved raw audio (.raw/<stream>.pcm, 16 kHz mono Int16) offline and
+ * saves it like a normal meeting: transcript, audio.m4a, index. Used for interrupted recordings and
+ * for recordings pulled from the phone (phoneRecordings.ts). True when the transcript was saved;
+ * on failure the meeting is marked 'error' (and its .raw audio stays).
+ */
+export async function transcribeSaved(folder: string, meta: MeetingMeta, streams: string[]): Promise<boolean> {
   const rawPaths = Object.fromEntries(streams.map((s) => [s, join(folder, '.raw', `${s}.pcm`)]))
   const id = `${meta.id}_r`
   meta.status = 'processing'
@@ -60,10 +70,12 @@ async function recoverOne(folder: string, meta: MeetingMeta, streams: string[]):
     }
     db().indexMeeting(meta, final.segments)
     broadcast('meetings:changed', meta.id)
+    return true
   } catch (err) {
     meta.status = 'error'
     meta.error = String((err as Error).message)
     writeMeta(folder, meta)
+    return false
   }
 }
 

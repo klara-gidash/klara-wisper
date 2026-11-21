@@ -24,7 +24,9 @@ import { machine, preflight } from './preflight'
 import { stopEngineProcesses } from './engineProcesses'
 import { removeApp } from './uninstall'
 import { asrChoices, selectAsr, selectLanguage } from './models'
-import { checkCloud, cloudState, configureCloud, deleteCloud, forgetCloud, syncAllCloud } from './cloud'
+import { checkCloud, configureCloud, deleteCloud, forgetCloud, syncAllCloud } from './cloud'
+import { cloudLinks, deployCloud, forgetApiToken, fullCloudState, rotatePhoneLink, updateCloudWorker } from './cloudDeploy'
+import { pullPhoneRecordings } from './phoneRecordings'
 import { disableObsidian, enableObsidian, exportAllObsidian, obsidianState, pickObsidianVault } from './obsidian'
 import { autoSummary } from './summarize'
 import { db } from './storage/db'
@@ -431,12 +433,38 @@ export function registerIpc(detector: Detector): void {
   handle('asr:select', (key: string) => selectAsr(String(key)))
   handle('asr:language', (lang: string) => selectLanguage(lang === 'auto' ? 'auto' : 'he'))
   // Optional Cloudflare copy of transcripts + summaries (phone connector).
-  handle('cloud:state', () => cloudState())
-  handle('cloud:configure', (opts: { url: string; token?: string; enabled: boolean }) =>
-    configureCloud({ url: String(opts?.url ?? ''), token: opts?.token === undefined ? undefined : String(opts.token), enabled: !!opts?.enabled }))
-  handle('cloud:check', () => checkCloud())
+  handle('cloud:state', () => fullCloudState())
+  handle('cloud:configure', async (opts: { url: string; token?: string; enabled: boolean }) => {
+    await configureCloud({ url: String(opts?.url ?? ''), token: opts?.token === undefined ? undefined : String(opts.token), enabled: !!opts?.enabled })
+    return fullCloudState()
+  })
+  handle('cloud:check', async () => {
+    await checkCloud()
+    return fullCloudState()
+  })
   handle('cloud:syncAll', () => syncAllCloud())
-  handle('cloud:forget', () => forgetCloud())
+  handle('cloud:forget', () => {
+    forgetCloud()
+    return fullCloudState()
+  })
+  // One-click deploy to the user's own Cloudflare account (cloudDeploy.ts); results, never throws.
+  const cfOpts = (o: unknown): { apiToken?: string; keepToken?: boolean; accountId?: string } => {
+    const r = (o ?? {}) as Record<string, unknown>
+    return {
+      apiToken: typeof r.apiToken === 'string' ? r.apiToken.slice(0, 200) : undefined,
+      keepToken: typeof r.keepToken === 'boolean' ? r.keepToken : undefined,
+      accountId: typeof r.accountId === 'string' && /^[0-9a-f]{32}$/i.test(r.accountId) ? r.accountId : undefined
+    }
+  }
+  handle('cloud:deploy', (o: unknown) => deployCloud(cfOpts(o)))
+  handle('cloud:updateWorker', (o: unknown) => updateCloudWorker(cfOpts(o)))
+  handle('cloud:rotatePhone', (o: unknown) => rotatePhoneLink(cfOpts(o)))
+  handle('cloud:forgetApiToken', () => forgetApiToken())
+  handle('cloud:links', () => cloudLinks())
+  handle('cloud:pullPhone', async () => {
+    await pullPhoneRecordings()
+    return fullCloudState()
+  })
   // Optional Obsidian export: one note per call in the vault the user picks.
   handle('obsidian:state', () => obsidianState())
   handle('obsidian:pickVault', () => pickObsidianVault())

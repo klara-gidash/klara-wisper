@@ -25,7 +25,7 @@ const pad = (n: number): string => String(n).padStart(2, '0')
 function folderLabel(meta: Pick<MeetingMeta, 'startedAt' | 'source' | 'title'>): string {
   const d = new Date(meta.startedAt)
   const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())}`
-  const source = meta.source === 'inperson' ? 'פנים מול פנים' : SOURCE_LABEL[meta.source]
+  const source = meta.source === 'inperson' ? 'פנים מול פנים' : meta.source === 'phone' ? 'טלפון' : SOURCE_LABEL[meta.source]
   const title = sanitizeName(meta.title)
   return [stamp, source, title && title !== source ? title : null].filter(Boolean).join(' · ')
 }

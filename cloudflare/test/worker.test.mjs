@@ -6,11 +6,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { inflateSync } from "node:zlib";
 import worker from "../src/worker.js";
 
 const SCHEMA = readFileSync(new URL("../schema.sql", import.meta.url), "utf8");
 const TOKEN = randomBytes(32).toString("hex"); // upload token (Bearer, /api only)
 const MCP_TOKEN = randomBytes(32).toString("hex"); // read-only connector token (/mcp only)
+const REC_TOKEN = randomBytes(32).toString("hex"); // phone link token (/rec only, upload-only)
 const BASE = "https://klara-wisper-gateway.example.workers.dev";
 
 class FakeStatement {
@@ -23,20 +25,28 @@ class FakeStatement {
     for (const a of args) {
       if (a === undefined) throw new TypeError("D1_TYPE_ERROR: Type 'undefined' not supported");
     }
-    return new FakeStatement(this.db, this.sql, args);
+    // D1 takes an ArrayBuffer for a BLOB; node:sqlite wants a typed array.
+    return new FakeStatement(this.db, this.sql, args.map((a) => (a instanceof ArrayBuffer ? new Uint8Array(a) : a)));
   }
   async run() {
     const r = this.db.prepare(this.sql).run(...this.args);
     return { success: true, results: [], meta: { changes: Number(r.changes) } };
   }
   async all() {
-    return { success: true, results: this.db.prepare(this.sql).all(...this.args).map((r) => ({ ...r })), meta: {} };
+    return { success: true, results: this.db.prepare(this.sql).all(...this.args).map(d1Row), meta: {} };
   }
   async first(column) {
     const row = this.db.prepare(this.sql).get(...this.args);
     if (!row) return null;
-    return column ? row[column] : { ...row };
+    return column ? d1Row(row)[column] : d1Row(row);
   }
+}
+
+// D1 documents BLOB results as arrays of numbers.
+function d1Row(row) {
+  const out = {};
+  for (const [k, v] of Object.entries(row)) out[k] = v instanceof Uint8Array ? Array.from(v) : v;
+  return out;
 }
 
 class FakeD1 {
@@ -45,19 +55,44 @@ class FakeD1 {
     if (schema) this.db.exec(SCHEMA);
   }
   prepare(sql) {
+    this.queries = (this.queries ?? 0) + 1;
     return new FakeStatement(this.db, sql);
+  }
+  async batch(statements) {
+    this.db.exec("BEGIN");
+    try {
+      const out = [];
+      for (const s of statements) out.push(await s.run());
+      this.db.exec("COMMIT");
+      return out;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 }
 
-const env = (over = {}) => ({ DB: new FakeD1(), KLARA_TOKEN: TOKEN, KLARA_MCP_TOKEN: MCP_TOKEN, ...over });
+const env = (over = {}) => ({
+  DB: new FakeD1(), KLARA_TOKEN: TOKEN, KLARA_MCP_TOKEN: MCP_TOKEN, KLARA_REC_TOKEN: REC_TOKEN, ...over,
+});
 
-async function call(e, method, path, { body, token, headers } = {}) {
+async function call(e, method, path, { body, token, headers, raw } = {}) {
   const h = new Headers(headers);
   if (token) h.set("Authorization", `Bearer ${token}`);
-  if (body !== undefined) h.set("Content-Type", "application/json");
   const init = { method, headers: h };
-  if (body !== undefined) init.body = typeof body === "string" ? body : JSON.stringify(body);
+  if (raw !== undefined) {
+    h.set("Content-Type", "application/octet-stream");
+    init.body = raw;
+  } else if (body !== undefined) {
+    h.set("Content-Type", "application/json");
+    init.body = typeof body === "string" ? body : JSON.stringify(body);
+  }
   const res = await worker.fetch(new Request(BASE + path, init), e);
+  const type = res.headers.get("Content-Type") || "";
+  if (!type.startsWith("application/json")) {
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    return { res, status: res.status, bytes, text: new TextDecoder().decode(bytes), data: null };
+  }
   const text = await res.text();
   return { res, status: res.status, text, data: text ? JSON.parse(text) : null };
 }
@@ -110,6 +145,8 @@ test("health needs no auth and sends security headers but no CORS", async () => 
   assert.equal(status, 200);
   assert.equal(data.ok, true);
   assert.match(data.version, /^\d+\.\d+\.\d+$/);
+  assert.equal(data.version, "1.1.0");
+  assert.deepEqual(data.features, ["meetings", "mcp", "recordings"]);
   assert.equal(res.headers.get("X-Content-Type-Options"), "nosniff");
   assert.equal(res.headers.get("Cache-Control"), "no-store");
   assert.ok(res.headers.get("Content-Security-Policy"));
@@ -476,7 +513,374 @@ test("a database without the schema gives a clear error, and nothing secret is l
   const t = await tool(e, "search_meetings", { query: marker });
   assert.equal(t.isError, true);
   assert.match(t.text, /schema\.sql/);
-  assert.equal(logged.some((l) => l.includes(marker) || l.includes(TOKEN) || l.includes(MCP_TOKEN)), false);
+  assert.equal(logged.some((l) => l.includes(marker) || l.includes(TOKEN) || l.includes(MCP_TOKEN) || l.includes(REC_TOKEN)), false);
+});
+
+// ---------- phone recordings ----------
+
+const REC = `/rec/${REC_TOKEN}`;
+const recStart = (e, over = {}) =>
+  call(e, "POST", `${REC}/start`, {
+    body: { title: "פגישה במשרד", kind: "inperson", mime: "audio/webm;codecs=opus", startedAt: NOW, ...over },
+  });
+const recChunk = (e, id, seq, bytes) => call(e, "POST", `${REC}/chunk?id=${id}&seq=${seq}`, { raw: bytes });
+const recFinish = (e, id, body) => call(e, "POST", `${REC}/finish?id=${id}`, { body });
+const api = (e, method, path, opts = {}) => call(e, method, path, { token: TOKEN, ...opts });
+const bytesOf = (n, fill) => new Uint8Array(n).fill(fill);
+
+test("the /rec routes answer 404 unless KLARA_REC_TOKEN is set, long enough and different", async () => {
+  const unknown = await call(env(), "GET", "/nothing-here");
+  for (const over of [
+    { KLARA_REC_TOKEN: undefined },
+    { KLARA_REC_TOKEN: "" },
+    { KLARA_REC_TOKEN: "short-rec-token" },
+    { KLARA_REC_TOKEN: TOKEN },
+    { KLARA_REC_TOKEN: MCP_TOKEN },
+  ]) {
+    const e = env(over);
+    const t = over.KLARA_REC_TOKEN || REC_TOKEN;
+    for (const [method, path] of [["GET", `/rec/${t}`], ["POST", `/rec/${t}/start`], ["GET", `/rec/${t}/manifest.webmanifest`]]) {
+      const r = await call(e, method, path, method === "POST" ? { body: {} } : {});
+      assert.equal(r.status, 404, `${JSON.stringify(over)} ${path}`);
+      assert.equal(r.text, unknown.text);
+    }
+  }
+  // Wrong tokens look exactly like unknown paths.
+  const e = env();
+  for (const path of [`/rec/${"f".repeat(64)}`, `/rec/${TOKEN}`, `/rec/${MCP_TOKEN}`, "/rec/", `/rec/${REC_TOKEN.toUpperCase()}`]) {
+    const r = await call(e, "GET", path);
+    assert.equal(r.status, 404, path);
+    assert.equal(r.text, unknown.text);
+  }
+  assert.equal((await call(e, "GET", REC)).status, 200);
+  assert.equal((await call(e, "GET", `${REC}/`)).status, 200);
+  assert.equal((await call(e, "POST", REC, { body: {} })).status, 405);
+  assert.equal((await call(e, "GET", `${REC}/start`)).status, 405);
+});
+
+test("the three tokens are kept apart", async () => {
+  const e = env();
+  const { data } = await recStart(e);
+  await recChunk(e, data.id, 0, bytesOf(10, 1));
+  await recFinish(e, data.id, { chunks: 1, durationSec: 10 });
+
+  // The phone link can't read: no listing, no audio, no claim, no delete, and nothing on /api or /mcp.
+  for (const sub of ["list", "recordings", `audio?id=${data.id}`, `${data.id}/audio`, "claim", "meetings"]) {
+    assert.equal((await call(e, "GET", `${REC}/${sub}`)).status, 404, sub);
+  }
+  for (const [method, path] of [
+    ["GET", "/api/recordings"], ["GET", `/api/recordings/${data.id}/audio`], ["POST", `/api/recordings/${data.id}/claim`],
+    ["DELETE", `/api/recordings/${data.id}`], ["POST", "/api/meetings"],
+  ]) {
+    assert.equal((await call(e, method, path, { token: REC_TOKEN, body: method === "POST" ? {} : undefined })).status, 401, path);
+    assert.equal((await call(e, method, path, { token: MCP_TOKEN, body: method === "POST" ? {} : undefined })).status, 401, path);
+    assert.equal((await call(e, method, path)).status, 401, path);
+  }
+  const ping = { jsonrpc: "2.0", id: 1, method: "ping" };
+  assert.equal((await call(e, "POST", `/mcp/${REC_TOKEN}`, { body: ping })).status, 404);
+  // The app token and the connector token don't open the phone link.
+  assert.equal((await call(e, "POST", `/rec/${TOKEN}/start`, { body: {} })).status, 404);
+  assert.equal((await call(e, "POST", `/rec/${MCP_TOKEN}/chunk?id=${data.id}&seq=1`, { raw: bytesOf(5, 2) })).status, 404);
+  // The app token reads recordings.
+  const list = await api(e, "GET", "/api/recordings");
+  assert.equal(list.status, 200);
+  assert.equal(list.data.recordings.length, 1);
+  // Recordings never show up in the connector until the app uploads their transcript.
+  assert.match((await tool(e, "list_meetings", { days: 3650 })).text, /No meetings/);
+});
+
+test("phone recording: start, idempotent chunks, missing-chunk 409, finish, list, audio, claim, delete", async () => {
+  const e = env();
+  let r = await recStart(e, { title: "  שיחה   עם הספק  ", kind: "phone", mime: "audio/mp4", clientId: "abcdef0123456789" });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.ok, true);
+  assert.match(r.data.id, /^r_[a-z0-9]{16,}$/);
+  const id = r.data.id;
+  // A retried start with the same clientId gets the same recording.
+  assert.equal((await recStart(e, { kind: "phone", mime: "audio/mp4", clientId: "abcdef0123456789" })).data.id, id);
+  assert.notEqual((await recStart(e)).data.id, id);
+
+  const parts = [bytesOf(1000, 1), bytesOf(2000, 2), bytesOf(1500, 3), bytesOf(700, 4)];
+  for (const seq of [0, 1, 2]) assert.deepEqual((await recChunk(e, id, seq, parts[seq])).data, { ok: true });
+  // The same chunk again (a retry after a lost reply) is accepted and not counted twice.
+  assert.deepEqual((await recChunk(e, id, 1, parts[1])).data, { ok: true });
+  r = await api(e, "GET", "/api/recordings?status=recording");
+  const uploading = r.data.recordings.find((x) => x.id === id);
+  assert.equal(uploading.bytes, 4500);
+  assert.equal(uploading.chunks, 3);
+  assert.equal(uploading.status, "recording");
+  // Not ready yet: no audio, no claim, and it isn't listed as ready.
+  assert.equal((await api(e, "GET", `/api/recordings/${id}/audio`)).status, 409);
+  assert.equal((await api(e, "POST", `/api/recordings/${id}/claim`)).status, 409);
+  assert.deepEqual((await api(e, "GET", "/api/recordings?status=ready")).data, { ok: true, recordings: [] });
+
+  // Finishing with a chunk missing: 409 naming it, and the recording stays open.
+  r = await recFinish(e, id, { chunks: 5, durationSec: 41.6 });
+  assert.equal(r.status, 409);
+  assert.deepEqual(r.data.missing, [3, 4]);
+  r = await recFinish(e, id, { chunks: 4, durationSec: 41.6 });
+  assert.deepEqual(r.data.missing, [3]);
+  await recChunk(e, id, 3, parts[3]);
+  r = await recFinish(e, id, { chunks: 4, durationSec: 41.6 });
+  assert.deepEqual(r.data, { ok: true });
+  assert.deepEqual((await recFinish(e, id, { chunks: 4, durationSec: 41.6 })).data, { ok: true }); // sent twice
+  assert.equal((await recFinish(e, id, { chunks: 6, durationSec: 41.6 })).status, 409);
+  // After finish: a stored chunk is still idempotent, a new one is refused.
+  assert.deepEqual((await recChunk(e, id, 2, parts[2])).data, { ok: true });
+  assert.equal((await recChunk(e, id, 4, bytesOf(10, 9))).status, 409);
+
+  r = await api(e, "GET", "/api/recordings?status=ready");
+  assert.deepEqual(r.data.recordings, [{
+    id, title: "שיחה עם הספק", kind: "phone", mime: "audio/mp4", startedAt: NOW, durationSec: 42,
+    bytes: 5200, chunks: 4, status: "ready",
+  }]);
+  assert.equal((await api(e, "GET", "/api/recordings")).data.recordings.length, 2);
+  assert.equal((await api(e, "GET", "/api/recordings?status=done")).status, 400);
+  assert.equal((await api(e, "POST", "/api/recordings")).status, 405);
+
+  // Audio: the chunks joined in order, with the stored type.
+  r = await api(e, "GET", `/api/recordings/${id}/audio`);
+  assert.equal(r.status, 200);
+  assert.equal(r.res.headers.get("Content-Type"), "audio/mp4");
+  assert.equal(r.res.headers.get("X-Recording-Bytes"), "5200");
+  assert.match(r.res.headers.get("Content-Disposition"), /\.m4a"$/);
+  assert.deepEqual(r.bytes, Uint8Array.from([...parts[0], ...parts[1], ...parts[2], ...parts[3]]));
+
+  // Claim: processing; a second claim within 30 minutes is refused; an older claim can be taken over.
+  r = await api(e, "POST", `/api/recordings/${id}/claim`);
+  assert.equal(r.status, 200);
+  assert.equal(r.data.status, "processing");
+  assert.equal(r.data.recording.status, "processing");
+  r = await api(e, "POST", `/api/recordings/${id}/claim`);
+  assert.equal(r.status, 409);
+  assert.match(r.data.error, /30 minutes/);
+  assert.equal((await api(e, "GET", "/api/recordings?status=processing")).data.recordings[0].id, id);
+  assert.equal((await api(e, "GET", `/api/recordings/${id}/audio`)).status, 200); // still downloadable while processing
+  e.DB.db.prepare("UPDATE recordings SET claimed_at = ? WHERE id = ?").run(new Date(Date.now() - 31 * 60_000).toISOString(), id);
+  assert.equal((await api(e, "POST", `/api/recordings/${id}/claim`)).status, 200);
+  assert.equal((await api(e, "POST", "/api/recordings/r_0000000000000000/claim")).status, 404);
+  assert.equal((await api(e, "GET", "/api/recordings/r_0000000000000000/audio")).status, 404);
+  assert.equal((await api(e, "GET", "/api/recordings/not-an-id/audio")).status, 404);
+
+  // Delete: the row and its audio.
+  r = await api(e, "DELETE", `/api/recordings/${id}`);
+  assert.deepEqual(r.data, { ok: true, deleted: 1 });
+  assert.equal(e.DB.db.prepare("SELECT COUNT(*) AS n FROM recording_chunks WHERE id = ?").get(id).n, 0);
+  assert.deepEqual((await api(e, "DELETE", `/api/recordings/${id}`)).data, { ok: true, deleted: 0 });
+  assert.equal((await api(e, "GET", `/api/recordings/${id}/audio`)).status, 404);
+  assert.equal((await recChunk(e, id, 5, bytesOf(10, 1))).status, 404);
+});
+
+test("phone recording validation and limits", async () => {
+  const e = env();
+  for (const [over, re] of [
+    [{ kind: "zoom" }, /kind/],
+    [{ kind: undefined }, /kind/],
+    [{ mime: "video/mp4" }, /mime/],
+    [{ mime: "audio/webm\r\nX-Evil: 1" }, /mime/],
+    [{ startedAt: "now" }, /startedAt/],
+    [{ title: 5 }, /title/],
+    [{ title: "x".repeat(301) }, /title/],
+    [{ clientId: "no spaces allowed" }, /clientId/],
+  ]) {
+    const r = await recStart(e, over);
+    assert.equal(r.status, 400, JSON.stringify(over));
+    assert.match(r.data.error, re);
+  }
+  assert.equal((await call(e, "POST", `${REC}/start`, { body: "[]" })).status, 400);
+  const { data } = await recStart(e);
+  const id = data.id;
+  assert.equal((await recChunk(e, "r_bad", 0, bytesOf(10, 1))).status, 400);
+  assert.equal((await recChunk(e, id, -1, bytesOf(10, 1))).status, 400);
+  assert.equal((await recChunk(e, id, "x", bytesOf(10, 1))).status, 400);
+  assert.equal((await recChunk(e, id, 5000, bytesOf(10, 1))).status, 413);
+  assert.equal((await recChunk(e, id, 0, new Uint8Array(0))).status, 400);
+  assert.equal((await recChunk(e, "r_0000000000000000", 0, bytesOf(10, 1))).status, 404);
+  let r = await recChunk(e, id, 0, bytesOf(1_000_001, 7));
+  assert.equal(r.status, 413);
+  assert.match(r.data.error, /1,000,000 bytes/);
+  assert.equal((await recChunk(e, id, 0, bytesOf(1_000_000, 7))).status, 200);
+  for (const body of [{ chunks: 0, durationSec: 1 }, { chunks: 1.5, durationSec: 1 }, { chunks: 1, durationSec: -1 }, { chunks: 1 }]) {
+    assert.equal((await recFinish(e, id, body)).status, 400, JSON.stringify(body));
+  }
+  assert.equal((await recFinish(e, "r_0000000000000000", { chunks: 1, durationSec: 1 })).status, 404);
+  // A title given at finish replaces the one from start.
+  assert.equal((await recFinish(e, id, { chunks: 1, durationSec: 3, title: "כותרת אחרי ההקלטה" })).status, 200);
+  assert.equal((await api(e, "GET", "/api/recordings?status=ready")).data.recordings[0].title, "כותרת אחרי ההקלטה");
+
+  // At most 20 unfinished recordings at once.
+  const many = env();
+  for (let i = 0; i < 20; i++) assert.equal((await recStart(many)).status, 200);
+  r = await recStart(many);
+  assert.equal(r.status, 429);
+});
+
+test("the stored audio has a cap, with a clear 507", async () => {
+  const e = env({ KLARA_REC_QUOTA_MB: "1" }); // 1,000,000 bytes
+  const { data } = await recStart(e);
+  assert.equal((await recChunk(e, data.id, 0, bytesOf(600_000, 1))).status, 200);
+  let r = await recChunk(e, data.id, 1, bytesOf(600_000, 2));
+  assert.equal(r.status, 507);
+  assert.match(r.data.error, /full \(1 MB\).*Klara Wisper/);
+  assert.equal((await recChunk(e, data.id, 1, bytesOf(300_000, 2))).status, 200);
+  await recChunk(e, data.id, 2, bytesOf(100_000, 3));
+  r = await recStart(e);
+  assert.equal(r.status, 507);
+  // Once the app deletes what it transcribed, there is room again.
+  await recFinish(e, data.id, { chunks: 3, durationSec: 30 });
+  await api(e, "DELETE", `/api/recordings/${data.id}`);
+  assert.equal((await recStart(e)).status, 200);
+});
+
+test("long recordings stream in pages and stay within D1's query limit", async () => {
+  const e = env();
+  const { data } = await recStart(e);
+  const n = 74; // 74 x ~900 KB = 66.6 MB, just under the 64 MiB (67.1 MB) cap for one recording
+  const sizes = [];
+  for (let seq = 0; seq < n; seq++) {
+    const size = 900_000 - seq;
+    sizes.push(size);
+    assert.equal((await recChunk(e, data.id, seq, bytesOf(size, seq % 251))).status, 200);
+  }
+  assert.equal((await recChunk(e, data.id, n, bytesOf(900_000, 1))).status, 413); // over 64 MB
+  assert.equal((await recFinish(e, data.id, { chunks: n, durationSec: 3600 })).status, 200);
+  const before = e.DB.queries;
+  const r = await api(e, "GET", `/api/recordings/${data.id}/audio`);
+  assert.equal(r.status, 200);
+  assert.ok(e.DB.queries - before < 45, `audio used ${e.DB.queries - before} queries`);
+  assert.equal(r.bytes.length, sizes.reduce((a, b) => a + b, 0));
+  let at = 0;
+  for (let seq = 0; seq < n; seq++) {
+    assert.equal(r.bytes[at], seq % 251);
+    assert.equal(r.bytes[at + sizes[seq] - 1], seq % 251);
+    at += sizes[seq];
+  }
+});
+
+test("an older database gets the recording tables created on first use", async () => {
+  const legacy = SCHEMA.slice(0, SCHEMA.indexOf("-- Phone recordings"));
+  assert.match(legacy, /CREATE TABLE IF NOT EXISTS meetings/);
+  assert.doesNotMatch(legacy, /CREATE TABLE IF NOT EXISTS recording/);
+  const d = new FakeD1({ schema: false });
+  d.db.exec(legacy);
+  const e = env({ DB: d });
+  await upload(e, meeting()); // existing data keeps working
+  const r = await recStart(e);
+  assert.equal(r.status, 200);
+  assert.equal((await recChunk(e, r.data.id, 0, bytesOf(10, 1))).status, 200);
+  assert.equal((await api(e, "GET", "/api/recordings")).data.recordings.length, 1);
+  assert.match((await tool(e, "list_meetings")).text, /m_acme1/);
+
+  // The tables the Worker creates are the same as in schema.sql.
+  const fresh = new FakeD1();
+  const shape = (db) =>
+    ["recordings", "recording_chunks", "recording_meta"].map((t) =>
+      JSON.stringify([t, db.prepare(`PRAGMA table_info(${t})`).all().map((c) => ({ ...c }))]))
+      .concat(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_recordings%' ORDER BY name").all().map((x) => x.name));
+  assert.deepEqual(shape(d.db), shape(fresh.db));
+});
+
+test("old recordings are cleaned up at most once an hour", async () => {
+  const e = env();
+  const ids = {};
+  for (const name of ["fresh", "unfinished", "ready", "waiting"]) {
+    const { data } = await recStart(e, { title: name });
+    ids[name] = data.id;
+    await recChunk(e, data.id, 0, bytesOf(100, 1));
+    if (name !== "unfinished") await recFinish(e, data.id, { chunks: 1, durationSec: 5 });
+  }
+  const days = (n) => new Date(Date.now() - n * 86_400_000).toISOString();
+  const db = e.DB.db;
+  db.prepare("UPDATE recordings SET updated_at = ? WHERE id = ?").run(days(8), ids.unfinished);
+  db.prepare("UPDATE recordings SET finished_at = ?, updated_at = ? WHERE id = ?").run(days(20), days(20), ids.ready);
+  db.prepare("UPDATE recordings SET finished_at = ?, status = 'processing' WHERE id = ?").run(days(31), ids.waiting);
+  db.prepare("INSERT INTO recording_chunks (id, seq, data) VALUES ('r_orphan0000000000', 0, x'00')").run();
+
+  // The cleanup ran when this database was first used, so it waits for the hour to pass, even in a new isolate.
+  const sameDb = Object.assign(Object.create(FakeD1.prototype), { db });
+  await call(env({ DB: sameDb }), "GET", "/api/health");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM recordings").get().n, 4);
+
+  // An hour later (in D1), any request cleans up: unfinished for 7 days, waiting for 30 days, orphan audio.
+  db.prepare("UPDATE recording_meta SET value = ? WHERE key = 'cleanup'").run(Date.now() - 3_600_001);
+  const later = Object.assign(Object.create(FakeD1.prototype), { db });
+  await call(env({ DB: later }), "GET", "/api/health");
+  const left = db.prepare("SELECT title FROM recordings ORDER BY title").all().map((x) => x.title);
+  assert.deepEqual(left, ["fresh", "ready"]);
+  const chunkIds = db.prepare("SELECT DISTINCT id FROM recording_chunks ORDER BY id").all().map((x) => x.id);
+  assert.deepEqual(chunkIds, [ids.fresh, ids.ready].sort());
+  assert.ok(db.prepare("SELECT value FROM recording_meta WHERE key = 'cleanup'").get().value > Date.now() - 60_000);
+});
+
+test("the recording page: self-contained, strict CSP, Hebrew and English, installable", async () => {
+  const e = env();
+  const r = await call(e, "GET", REC);
+  assert.equal(r.status, 200);
+  assert.match(r.res.headers.get("Content-Type"), /^text\/html; charset=utf-8/);
+  const csp = r.res.headers.get("Content-Security-Policy");
+  const nonce = /script-src 'nonce-([0-9a-f]{32})'/.exec(csp)?.[1];
+  assert.ok(nonce, csp);
+  assert.match(csp, /default-src 'none'/);
+  assert.match(csp, /connect-src 'self'/);
+  assert.match(csp, /frame-ancestors 'none'/);
+  assert.doesNotMatch(csp, /unsafe-inline|unsafe-eval|https?:/);
+  assert.match(r.res.headers.get("Permissions-Policy"), /microphone=\(self\)/);
+  assert.equal(r.res.headers.get("Cache-Control"), "no-store");
+  const html = r.text;
+  // Nothing external: no http(s) URLs in src/href, and every script and style carries the nonce.
+  assert.doesNotMatch(html, /(src|href)="(https?:)?\/\//);
+  assert.equal(html.match(/<script\b/g).length, html.match(new RegExp(`<script nonce="${nonce}">`, "g")).length);
+  assert.equal(html.match(/<style\b/g).length, html.match(new RegExp(`<style nonce="${nonce}">`, "g")).length);
+  assert.doesNotMatch(html, / style="/); // inline style attributes would be blocked by the CSP
+  // Both languages, chosen from navigator.language; RTL for Hebrew.
+  for (const s of ["Record to Klara Wisper", "In-person meeting", "Phone call on speaker", "Uploaded ✓ — will be transcribed on your computer"]) {
+    assert.ok(html.includes(s), s);
+  }
+  for (const s of ["הקלטה ל-Klara Wisper", "פגישה פרונטלית", "שיחת טלפון ברמקול", "הועלה ✓ — יתומלל במחשב שלך"]) {
+    assert.ok(html.includes(s), s);
+  }
+  assert.match(html, /navigator\.language/);
+  assert.match(html, /'rtl'/);
+  // The recorder: webm/opus or mp4, wake lock, IndexedDB, 10-second chunks.
+  for (const s of ["audio/webm;codecs=opus", "'audio/mp4'", "wakeLock", "indexedDB", "CHUNK_MS = 10000", "/chunk?id="]) {
+    assert.ok(html.includes(s), s);
+  }
+  assert.ok(html.includes(`href="${REC}/manifest.webmanifest"`));
+  assert.ok(html.includes(`href="${REC}/icon-192.png"`));
+  // The inline script compiles, and the nonce differs per response.
+  const script = html.slice(html.indexOf(`<script nonce="${nonce}">`) + `<script nonce="${nonce}">`.length, html.lastIndexOf("</script>"));
+  assert.doesNotThrow(() => new Function(script));
+  const again = await call(e, "GET", REC);
+  assert.notEqual(/'nonce-([0-9a-f]+)'/.exec(again.res.headers.get("Content-Security-Policy"))[1], nonce);
+
+  // Manifest, in Hebrew when the phone asks for Hebrew.
+  let m = await call(e, "GET", `${REC}/manifest.webmanifest`);
+  assert.equal(m.res.headers.get("Content-Type"), "application/manifest+json");
+  let manifest = JSON.parse(m.text);
+  assert.equal(manifest.start_url, REC);
+  assert.equal(manifest.display, "standalone");
+  assert.equal(manifest.lang, "en");
+  assert.deepEqual(manifest.icons.map((i) => i.src), [`${REC}/icon-192.png`, `${REC}/icon-512.png`]);
+  m = await call(e, "GET", `${REC}/manifest.webmanifest`, { headers: { "Accept-Language": "he-IL,he;q=0.9,en;q=0.8" } });
+  manifest = JSON.parse(m.text);
+  assert.equal(manifest.lang, "he");
+  assert.equal(manifest.dir, "rtl");
+  assert.equal(manifest.short_name, "הקלטה");
+
+  // The icons are valid PNGs of the right size.
+  for (const size of [192, 512]) {
+    const png = await call(e, "GET", `${REC}/icon-${size}.png`);
+    assert.equal(png.res.headers.get("Content-Type"), "image/png");
+    const b = Buffer.from(png.bytes);
+    assert.deepEqual([...b.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    assert.equal(b.readUInt32BE(16), size);
+    assert.equal(b.readUInt32BE(20), size);
+    const idatAt = b.indexOf("IDAT");
+    const raw = inflateSync(b.subarray(idatAt + 4, idatAt + 4 + b.readUInt32BE(idatAt - 4)));
+    assert.equal(raw.length, (Math.ceil(size / 4) + 1) * size);
+    assert.ok(raw.some((x) => x !== 0)); // the dot is drawn
+  }
+  assert.equal((await call(e, "GET", `${REC}/icon-64.png`)).status, 404);
 });
 
 test("the Worker never logs transcript text or the token", () => {
@@ -484,5 +888,6 @@ test("the Worker never logs transcript text or the token", () => {
     assert.doesNotMatch(line, /דוד|תקציב|meeting_content/);
     assert.equal(line.includes(TOKEN), false);
     assert.equal(line.includes(MCP_TOKEN), false);
+    assert.equal(line.includes(REC_TOKEN), false);
   }
 });

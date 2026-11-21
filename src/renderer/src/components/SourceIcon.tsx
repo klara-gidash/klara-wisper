@@ -1,4 +1,4 @@
-import { Headphones, MessageSquare, Phone, Users, Video } from 'lucide-react'
+import { Headphones, MessageSquare, Phone, Smartphone, Users, Video } from 'lucide-react'
 import type { MeetingSource } from '@shared/types'
 import { cn } from './ui'
 
@@ -17,6 +17,7 @@ const STYLE: Record<MeetingSource, { bg: string; fg: string; Icon: typeof Video 
   messenger: { bg: '#EAF0FF', fg: '#2F5FE0', Icon: MessageSquare },
   goto: { bg: '#FFF1E6', fg: '#C25A00', Icon: Video },
   inperson: { bg: '#FFF2DF', fg: '#B86E00', Icon: Users },
+  phone: { bg: '#EEF0FF', fg: '#4B55C8', Icon: Smartphone },
   other: { bg: '#EFEFF1', fg: '#5B5B64', Icon: Phone }
 }
 

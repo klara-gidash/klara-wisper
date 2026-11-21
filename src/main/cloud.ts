@@ -11,9 +11,33 @@ import { listMeetingFolders, readMeeting } from './storage/files'
  * Optional (off by default): copies each call's transcript and summary (never the audio) to the
  * user's own Cloudflare Worker (cloudflare/, docs/CLOUDFLARE.he.md). The Worker serves them to
  * Claude as a remote connector, so Claude on the phone can answer about the calls too.
- * The token is kept encrypted by macOS (safeStorage / Keychain), never in settings.json.
+ * The tokens are kept encrypted on this computer (safeStorage: Keychain on macOS, DPAPI on Windows),
+ * never in settings.json. Settings > "Claude on your phone" can also deploy the Worker by itself
+ * (cloudDeploy.ts) and pull recordings made on the phone (phoneRecordings.ts).
  */
 const TOKEN_FILE = join(dataDir, 'cloud-token.bin')
+/** The connector's read-only token and the phone link's token (made by the one-click deploy). */
+export const MCP_TOKEN_FILE = join(dataDir, 'cloud-mcp-token.bin')
+export const REC_TOKEN_FILE = join(dataDir, 'cloud-rec-token.bin')
+/** The Cloudflare API token, only when the user ticked "keep for updates". */
+export const API_TOKEN_FILE = join(dataDir, 'cloudflare-api-token.bin')
+/** What the one-click deploy made (account, database, address): no secrets. */
+export const DEPLOY_FILE = join(dataDir, 'cloud-deploy.json')
+
+/** An encrypted secret file, or null when missing or no longer readable. */
+export function readSecret(file: string): string | null {
+  try {
+    if (!existsSync(file) || !safeStorage.isEncryptionAvailable()) return null
+    return safeStorage.decryptString(readFileSync(file))
+  } catch {
+    return null
+  }
+}
+
+export function saveSecret(file: string, value: string): void {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('Encryption on this computer is not available, so the token cannot be saved')
+  writeFileSync(file, safeStorage.encryptString(value.trim()), { mode: 0o600 })
+}
 
 export interface CloudState {
   enabled: boolean
@@ -27,12 +51,12 @@ let lastSync: string | undefined
 let lastError: string | undefined
 
 function token(): string | null {
-  try {
-    if (!existsSync(TOKEN_FILE) || !safeStorage.isEncryptionAvailable()) return null
-    return safeStorage.decryptString(readFileSync(TOKEN_FILE))
-  } catch {
-    return null
-  }
+  return readSecret(TOKEN_FILE)
+}
+
+/** The upload token (KLARA_TOKEN), for re-sending the Worker's secrets on an update. */
+export function uploadToken(): string | null {
+  return token()
 }
 
 export function cloudState(): CloudState {
@@ -50,8 +74,7 @@ export async function configureCloud(opts: { url: string; token?: string; enable
   const url = opts.url ? cleanUrl(opts.url) : ''
   if (opts.token !== undefined && opts.token !== '') {
     if (opts.token.trim().length < 32) throw new Error('The token must be at least 32 characters (openssl rand -hex 32)')
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('macOS encryption (Keychain) is not available')
-    writeFileSync(TOKEN_FILE, safeStorage.encryptString(opts.token.trim()), { mode: 0o600 })
+    saveSecret(TOKEN_FILE, opts.token)
   }
   if (opts.enabled && (!url || !token())) throw new Error('Fill in the Worker address and the token first')
   settings.update({ cloudUrl: url, cloudSync: opts.enabled })
@@ -59,22 +82,44 @@ export async function configureCloud(opts: { url: string; token?: string; enable
   return cloudState()
 }
 
+/** Forgets this computer's connection: every saved token and what the one-click deploy made. */
 export function forgetCloud(): CloudState {
-  rmSync(TOKEN_FILE, { force: true })
+  for (const f of [TOKEN_FILE, MCP_TOKEN_FILE, REC_TOKEN_FILE, API_TOKEN_FILE, DEPLOY_FILE]) rmSync(f, { force: true })
   settings.update({ cloudSync: false })
   return cloudState()
 }
 
 async function call(method: string, path: string, body?: unknown): Promise<Response> {
+  return cloudRequest(method, path, { body: body === undefined ? undefined : JSON.stringify(body) })
+}
+
+/** One authenticated request to the user's Worker (Bearer upload token, no redirects). */
+export async function cloudRequest(method: string, path: string, opts: { body?: string; timeoutMs?: number } = {}): Promise<Response> {
   const t = token()
   if (!t || !settings.value.cloudUrl) throw new Error('Cloudflare sync is not set up')
   return fetch(settings.value.cloudUrl + path, {
     method,
-    headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
+    headers: { authorization: `Bearer ${t}`, ...(opts.body !== undefined ? { 'content-type': 'application/json' } : {}) },
+    body: opts.body,
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
     redirect: 'error' // never resend a transcript to a redirected (possibly http) address
   })
+}
+
+/** GET /api/health (no token): the Worker's version and the features it has ("recordings", …). */
+export async function cloudHealth(): Promise<{ version: string | null; features: string[] } | null> {
+  if (!settings.value.cloudUrl) return null
+  const r = await fetch(settings.value.cloudUrl + '/api/health', { signal: AbortSignal.timeout(15_000), redirect: 'error' })
+  if (!r.ok) return null
+  const body = (await r.json().catch(() => null)) as { version?: unknown; features?: unknown } | null
+  if (!body) return null
+  const f = body.features
+  const features = Array.isArray(f)
+    ? f.filter((x): x is string => typeof x === 'string')
+    : f && typeof f === 'object'
+      ? Object.entries(f as Record<string, unknown>).filter(([, v]) => !!v).map(([k]) => k)
+      : []
+  return { version: typeof body.version === 'string' ? body.version : null, features }
 }
 
 /** The Worker answers and accepts the token (deleting a meeting that doesn't exist changes nothing). */
@@ -131,6 +176,22 @@ export function queueCloud(id: string): void {
       lastError = (err as Error).message
       console.warn(`cloud sync: ${lastError}`) // no transcript content in the log
     })
+}
+
+/**
+ * Uploads one meeting now, after anything already queued, and rejects when it didn't reach the
+ * Worker (the phone recordings pull deletes the cloud recording only after this succeeds).
+ */
+export function uploadNow(id: string): Promise<void> {
+  const done = chain.then(async () => {
+    await upload(id)
+    lastSync = new Date().toISOString()
+    lastError = undefined
+  })
+  chain = done.catch((err) => {
+    lastError = (err as Error).message
+  })
+  return done
 }
 
 /**

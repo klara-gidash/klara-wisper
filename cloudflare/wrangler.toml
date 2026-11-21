@@ -1,5 +1,6 @@
 # Klara Wisper Cloud gateway. This file holds no secrets.
-# The access token is a Worker secret, set with: npx wrangler secret put KLARA_TOKEN
+# The three tokens are Worker secrets: npx wrangler secret put KLARA_TOKEN (and KLARA_MCP_TOKEN, KLARA_REC_TOKEN).
+# Optional: [vars] KLARA_REC_QUOTA_MB = "400" sets the most phone-recording audio kept in the cloud at once.
 name = "klara-wisper-gateway"
 main = "src/worker.js"
 compatibility_date = "2026-09-01"
@@ -7,7 +8,7 @@ workers_dev = true
 # No extra per-version preview hostnames for this Worker.
 preview_urls = false
 
-# Request logs would include the /mcp/<token> URL, so they stay off. `npx wrangler tail` still works for debugging.
+# Request logs would include the /mcp/<token> and /rec/<token> URLs, so they stay off. `npx wrangler tail` still works for debugging.
 [observability]
 enabled = false
 

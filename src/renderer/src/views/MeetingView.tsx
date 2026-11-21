@@ -151,7 +151,7 @@ export function MeetingView({ id: rawId, onBack }: { id: string; onBack: () => v
               <span className="text-ink-3">·</span>
               <span>{fmtDuration(meta.durationSec, lang)}</span>
               <span className="text-ink-3">·</span>
-              <span>{meta.source === 'inperson' ? t('nav.inperson') : SOURCE_LABEL[meta.source]}</span>
+              <span>{meta.source === 'inperson' ? t('nav.inperson') : meta.source === 'phone' ? t('cf.phoneSource') : SOURCE_LABEL[meta.source]}</span>
               {meta.languages?.length ? (
                 <>
                   <span className="text-ink-3">·</span>

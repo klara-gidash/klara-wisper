@@ -27,6 +27,7 @@ import { createTray } from './tray'
 import { cleanupOutside } from './uninstall'
 import { runHealth } from './health'
 import { watchLibrary } from './watch'
+import { startPhoneRecordings } from './phoneRecordings'
 import { broadcast, pillWindow, showLibrary } from './windows'
 
 app.setName('Klara Wisper')
@@ -232,6 +233,7 @@ app.whenReady().then(async () => {
   if (index.isEmpty()) index.rebuild()
   registerIpc(detector)
   watchLibrary()
+  startPhoneRecordings() // optional: recordings made on the phone (only with Cloudflare sync on)
 
   helper.on('hello', () => void configureHelper())
   let micHolders = new Set<string>()

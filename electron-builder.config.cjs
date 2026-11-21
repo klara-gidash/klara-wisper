@@ -5,6 +5,12 @@
 //   scripts/make-windows.ps1 the Windows installer (see WINDOWS.md)
 const { existsSync } = require('node:fs')
 
+// The optional Cloudflare gateway, deployed from Settings to the user's own account (src/main/cloudDeploy.ts).
+const cloudflareFiles = [
+  { from: 'cloudflare/src/worker.js', to: 'cloudflare/worker.js' },
+  { from: 'cloudflare', to: 'cloudflare', filter: ['schema.sql', 'wrangler.toml'] }
+]
+
 const engineSource = {
   from: 'engine',
   to: 'engine',
@@ -37,7 +43,8 @@ module.exports = {
       engineSource,
       // Claude skills (before / during / after a call), installed for Claude Code on launch.
       { from: 'skills', to: 'skills', filter: ['*/SKILL.md'] },
-      { from: 'resources', to: '.', filter: ['tray*.png', 'health-he.wav'] }
+      { from: 'resources', to: '.', filter: ['tray*.png', 'health-he.wav'] },
+      ...cloudflareFiles
     ],
     // uv (pinned, checksum-verified by the build script) sits next to the app binary so it is signed with it.
     extraFiles: existsSync('build/uv/uv') ? [{ from: 'build/uv/uv', to: 'MacOS/uv' }] : [],
@@ -66,7 +73,8 @@ module.exports = {
       engineSource,
       { from: 'skills', to: 'skills', filter: ['*/SKILL.md'] },
       { from: 'build/uv-win/uv.exe', to: 'bin/uv.exe' },
-      { from: 'resources', to: '.', filter: ['tray*.png', 'health-he.wav'] }
+      { from: 'resources', to: '.', filter: ['tray*.png', 'health-he.wav'] },
+      ...cloudflareFiles
     ]
   },
   nsis: {
