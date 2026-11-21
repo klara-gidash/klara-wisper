@@ -82,8 +82,10 @@ export interface PullDeps {
   list(): Promise<CloudRecording[]>
   /** False when the recording is already taken (another computer, or gone). */
   claim(id: string): Promise<boolean>
+  /** Hands a claim back after a try that failed before the transcript was saved (optional: older Workers lack it). */
+  release?(id: string): Promise<void>
   download(id: string): Promise<{ bytes: Uint8Array; contentType: string | null }>
-  /** Decodes to 16 kHz mono and writes a .wav; its path. */
+  /** Decodes to 16 kHz mono and writes it as raw Int16 PCM (the .raw/mic.pcm format); its path. */
   decode(rec: CloudRecording, bytes: Uint8Array, contentType: string | null): Promise<string>
   /** A meeting made earlier from this recording (e.g. the app quit before the cloud copy was deleted). */
   findLocal(recordingId: string): { meetingId: string; status: string } | null
@@ -191,6 +193,7 @@ export class RecordingsPuller {
   private async one(rec: CloudRecording, report: PullReport): Promise<void> {
     const d = this.deps
     let wav: string | null = null
+    let claimed = false // by this try, and not yet saved here: handed back on failure
     this.current = rec.id
     try {
       const local = d.findLocal(rec.id)
@@ -207,12 +210,14 @@ export class RecordingsPuller {
       if (local) d.removeLocal(local.meetingId) // a failed try: start over from the cloud copy
 
       if (!(await d.claim(rec.id))) return
+      claimed = true
       const file = await d.download(rec.id)
       if (!file.bytes.byteLength) throw new Error('empty recording')
       wav = await d.decode(rec, file.bytes, file.contentType ?? rec.contentType)
       const meetingId = await d.transcribe(rec, wav)
       // Saved here: from now on only the cloud side is left, and it is retried until it's done.
       this.addPending({ recordingId: rec.id, meetingId })
+      claimed = false
       d.cleanup(wav)
       wav = null
       report.imported.push(meetingId)
@@ -222,6 +227,8 @@ export class RecordingsPuller {
       this.failures.delete(rec.id)
     } catch (err) {
       const message = (err as Error)?.message ?? String(err)
+      // The next round (2 minutes) can try again at once, instead of waiting out the 30-minute claim.
+      if (claimed && d.release) await d.release(rec.id).catch(() => undefined)
       this.failures.set(rec.id, (this.failures.get(rec.id) ?? 0) + 1)
       report.failed.push({ id: rec.id, error: message })
       d.log(`phone recording ${rec.id}: ${message} (kept in the cloud for the next try)`)

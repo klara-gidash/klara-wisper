@@ -789,6 +789,20 @@ test("an older database gets the recording tables created on first use", async (
   assert.deepEqual(shape(d.db), shape(fresh.db));
 });
 
+test("release hands a claimed recording back to ready; only a claimed one", async () => {
+  const e = env();
+  const { data } = await recStart(e);
+  await recChunk(e, data.id, 0, bytesOf(10, 1));
+  assert.equal((await api(e, "POST", `/api/recordings/${data.id}/release`)).data.released, 0, "still uploading");
+  await recFinish(e, data.id, { chunks: 1, durationSec: 1 });
+  assert.equal((await api(e, "POST", `/api/recordings/${data.id}/claim`)).status, 200);
+  assert.equal((await api(e, "POST", `/api/recordings/${data.id}/claim`)).status, 409);
+  assert.equal((await api(e, "POST", `/api/recordings/${data.id}/release`)).data.released, 1);
+  assert.equal((await api(e, "POST", `/api/recordings/${data.id}/claim`)).status, 200, "claimable again at once");
+  assert.equal((await call(e, "POST", `/api/recordings/${data.id}/release`, { token: e.KLARA_MCP_TOKEN })).status, 401);
+  assert.equal((await api(e, "GET", `/api/recordings/${data.id}/release`)).status, 405);
+});
+
 test("two starts racing with the same clientId get one recording (unique index)", async () => {
   const e = env();
   const body = { kind: "phone", mime: "audio/webm", clientId: "race0123456789ab" };

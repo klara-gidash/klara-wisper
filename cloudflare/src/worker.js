@@ -156,6 +156,10 @@ async function route(request, env) {
       if (method !== "POST") return methodNotAllowed("POST");
       return claimRecording(id, env);
     }
+    if (parts.length === 2 && parts[1] === "release") {
+      if (method !== "POST") return methodNotAllowed("POST");
+      return releaseRecording(id, env);
+    }
     return notFound();
   }
 
@@ -688,6 +692,15 @@ async function claimRecording(id, env) {
   if (changes(r)) return json({ ok: true, status: "processing", recording: recordingJson(row) });
   if (row.status === "recording") throw new HttpError(409, "this recording is still uploading from the phone");
   throw new HttpError(409, "this recording is already being processed; a claim expires after 30 minutes");
+}
+
+/** Hands a claimed recording back (the app's try failed before the transcript was saved), so the next round can retry now. */
+async function releaseRecording(id, env) {
+  const r = await db(env)
+    .prepare("UPDATE recordings SET status = 'ready', claimed_at = NULL, updated_at = ? WHERE id = ? AND status = 'processing'")
+    .bind(new Date().toISOString(), id)
+    .run();
+  return json({ ok: true, released: changes(r) });
 }
 
 async function deleteRecording(id, env) {
@@ -1866,6 +1879,13 @@ input[type=text]{font:inherit;font-size:17px;color:var(--fg);background:var(--ca
     var a = { rec: rec, recorder: recorder, stream: stream, audio: audio, t0: Date.now(), queue: Promise.resolve(), stopped: false };
     return addRec(rec).then(function () {
       active = a;
+      // While this tab records, it holds a lock named after the recording (released by itself if the tab dies),
+      // so another tab of this page doesn't offer to "finish" or clean up a recording that is still going on.
+      if (navigator.locks && navigator.locks.request) {
+        navigator.locks.request('klara-rec-' + rec.key, function () {
+          return new Promise(function (resolve) { a.unlock = resolve; });
+        }).catch(function () {});
+      }
       recorder.ondataavailable = function (ev) {
         if (!ev.data || !ev.data.size) return;
         var blob = ev.data;
@@ -1940,6 +1960,7 @@ input[type=text]{font:inherit;font-size:17px;color:var(--fg);background:var(--ca
     var rec = a.rec;
     var fields = { finished: true, title: titleEl.value.trim().slice(0, 300), durationSec: rec.durationSec };
     active = null;
+    if (a.unlock) a.unlock();
     titleEl.value = '';
     timerEl.textContent = '00:00:00';
     var done = rec.nextSeq === 0 ? delRec(rec.key) : patchRec(rec.key, fields);
@@ -2102,7 +2123,13 @@ input[type=text]{font:inherit;font-size:17px;color:var(--fg);background:var(--ca
   if (!window.indexedDB) {
     setStatus(S.ready);
   } else {
-    allRecs().then(function (recs) {
+    var heldLocks = navigator.locks && navigator.locks.query
+      ? navigator.locks.query().then(function (st) { return (st.held || []).map(function (l) { return l.name; }); }, function () { return []; })
+      : Promise.resolve([]);
+    Promise.all([allRecs(), heldLocks]).then(function (v) {
+      var recs = v[0], held = v[1];
+      // A recording another tab is still making (it holds its lock) is neither offered nor cleaned up here.
+      recs = recs.filter(function (r) { return held.indexOf('klara-rec-' + r.key) < 0; });
       var open = recs.filter(function (r) { return !r.finished && r.nextSeq; });
       recs.forEach(function (r) { if (!r.nextSeq) delRec(r.key); });
       if (open.length) {

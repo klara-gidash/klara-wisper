@@ -147,6 +147,28 @@ test('an upload that fails for another reason (meeting not finished, 401) keeps 
   assert.deepEqual(s.pending(), [{ recordingId: 'r1', meetingId: 'm_r1' }])
 })
 
+test('a try that fails before the transcript is saved hands the claim back; one that fails after it does not', async () => {
+  for (const stage of ['download r1', 'decode r1', 'transcribe r1']) {
+    const s = setup({ fail: stage })
+    const released: string[] = []
+    ;(s as any).p.deps.release = async (id: string) => void released.push(id)
+    await s.p.pullOnce()
+    assert.deepEqual(released, ['r1'], stage)
+  }
+  const s = setup({ fail: 'upload m_r1' })
+  const released: string[] = []
+  ;(s as any).p.deps.release = async (id: string) => void released.push(id)
+  await s.p.pullOnce()
+  assert.deepEqual(released, [], 'saved here: kept claimed, finished from the pending list')
+  // A release that fails itself changes nothing else.
+  const s2 = setup({ fail: 'decode r1' })
+  ;(s2 as any).p.deps.release = async () => {
+    throw new Error('offline')
+  }
+  const r = await s2.p.pullOnce()
+  assert.equal(r.failed[0].error, 'decode r1 failed')
+})
+
 test('phoneTitle is in Israel time whatever the computer time zone', () => {
   assert.equal(phoneTitle('2026-11-20T10:05:00Z', 'en'), 'Phone recording 12:05')
   assert.equal(phoneTitle('2026-07-20T10:05:00Z', 'he'), 'הקלטה מהטלפון 13:05')

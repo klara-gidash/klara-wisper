@@ -64,6 +64,7 @@ If `KLARA_TOKEN` is missing or shorter than 32 characters, every authenticated r
 | GET | `/api/recordings?status=ready` | none; `status` is optional: `recording`, `ready` or `processing` | `{"ok":true,"recordings":[{id,title,kind,mime,startedAt,durationSec,bytes,chunks,status}]}`, oldest first, at most 200 |
 | GET | `/api/recordings/:id/audio` | none | the chunks joined in order, streamed; `Content-Type` is the stored mime, `X-Recording-Bytes` the total (and `Content-Length` on Cloudflare). 409 while still uploading |
 | POST | `/api/recordings/:id/claim` | none | `{"ok":true,"status":"processing","recording":{…}}`; 409 if it is still uploading, or already processing and claimed less than 30 minutes ago |
+| POST | `/api/recordings/:id/release` | none | `{"ok":true,"released":1}` (or `0`); a claimed recording goes back to `ready`, after a try that failed before its transcript was saved, so the next round retries at once instead of in 30 minutes |
 | DELETE | `/api/recordings/:id` | none | `{"ok":true,"deleted":1}` (or `0`); deletes the row and its audio |
 
 The app's loop: list `?status=ready`, claim one, download its audio, transcribe, `POST /api/meetings` with the
