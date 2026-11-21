@@ -7,14 +7,33 @@ still need (the open utterance plus a short look-back), so memory stays flat in 
 
 from __future__ import annotations
 
+import io
 from dataclasses import dataclass
+from functools import lru_cache
+from importlib import resources
 
 import numpy as np
 import torch
-from silero_vad import VADIterator, load_silero_vad
+from silero_vad import VADIterator
 
 SR = 16000
 WINDOW = 512  # samples per Silero step at 16 kHz
+
+
+@lru_cache(maxsize=1)
+def _silero_bytes() -> bytes:
+    return resources.files("silero_vad").joinpath("data", "silero_vad.jit").read_bytes()
+
+
+def load_silero_vad() -> torch.jit.ScriptModule:
+    """Silero VAD from bytes read by Python, not from a path given to torch.
+
+    torch.jit.load(path) opens the file with the C runtime's narrow fopen, which on Windows fails for
+    any non-ASCII path (a Hebrew user name: C:\\Users\\קלרה\\...), so nothing was ever transcribed.
+    """
+    model = torch.jit.load(io.BytesIO(_silero_bytes()), map_location="cpu")
+    model.eval()
+    return model
 
 
 @dataclass
