@@ -20,7 +20,7 @@ const TIMEOUT_MS = 8 * 60_000
 /** The only things the automatic Claude may do: read the transcript, save its notes, name an ad-hoc call. */
 const ALLOWED = ['mcp__klara-wisper__get_transcript', 'mcp__klara-wisper__save_meeting_notes', 'mcp__klara-wisper__set_meeting_details']
 /** Denied outright (the MCP server refuses them too, see KLARA_MCP_ONLY): the rest of the library, dictations, calendar. */
-const DISALLOWED = ['list_meetings', 'search_transcripts', 'list_dictations', 'list_upcoming_meetings', 'set_speaker_name']
+const DISALLOWED = ['list_meetings', 'search_transcripts', 'list_dictations', 'list_upcoming_meetings', 'list_clients', 'get_client', 'set_speaker_name']
   .map((t) => `mcp__klara-wisper__${t}`)
 /** The only variables the CLI gets from the app's environment: nothing ANTHROPIC_* or CLAUDE_*. */
 const CLI_ENV = ['HOME', 'USER', 'LOGNAME', 'PATH', 'LANG', 'TMPDIR', 'SHELL']

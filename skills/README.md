@@ -16,8 +16,9 @@
 - "הכנה לפגישה הבאה"
 - "מה צריך לדעת לפני הפגישה עם Acme?"
 - "על מה דיברנו בפעם הקודמת עם Acme?"
+- "מה פתוח מול שיכון ובינוי?" (תיק לקוח: כל הפגישות, המשימות הפתוחות וההחלטות מול לקוח או אדם)
 
-קריאה בלבד: הסקיל לא שומר ולא משנה כלום.
+קריאה בלבד: הסקיל לא שומר ולא משנה כלום. תיק הלקוח מגיע מהכלים `list_clients` ו-`get_client` של Klara Wisper, שמקבצים את הפגישות לפי הדומיין במייל של המשתתפים, השמות שלהם ומילים בשם הפגישה. אותו תיק מופיע גם באפליקציה, בעמוד "לקוחות".
 
 ### במהלך שיחה: `klara-live-catch-up`
 
@@ -40,6 +41,9 @@ Klara Wisper יכולה לסכם כל שיחה לבד, דקה-שתיים אחר�
 - "לסכם את הפגישה עם Acme מאתמול"
 - "לסכם את כל השיחות שאין להן סיכום"
 - "לשלוח את הסיכום למשתתפים"
+- "לפתוח את המשימות ב-Linear" / "להעביר את המשימות ל-monday"
+
+כשיש ב-Claude מחבר Linear או monday, אחרי שהסיכום נשמר Claude שואל "לפתוח את המשימות ב-Linear?" (ראו "משימות ב-Linear או ב-monday").
 
 ### בסוף היום: `klara-daily-digest`
 
@@ -49,6 +53,7 @@ Klara Wisper יכולה לסכם כל שיחה לבד, דקה-שתיים אחר�
 - "מה היה היום?"
 - "סיכום יומי"
 - "על מה היו השיחות אתמול?"
+- "לפתוח את המשימות של היום ב-Linear"
 
 **כל ערב, לבד:** ב-Claude Desktop יוצרים משימה מתוזמנת (Scheduled task) שרצה כל יום, למשל ב-19:00, עם הבקשה "סיכום יומי של השיחות של היום". דרך פשוטה: לכתוב ל-Claude Desktop "ליצור משימה מתוזמנת שרצה כל יום ב-19:00 ועושה סיכום יומי של השיחות של היום". המשימה רצה על המק, ולכן הוא צריך להיות דלוק בשעה הזאת. בריצה המתוזמנת Claude לא שואל שאלות ולא שולח כלום.
 
@@ -63,11 +68,23 @@ Klara Wisper יכולה לסכם כל שיחה לבד, דקה-שתיים אחר�
 3. Claude מציג את הטיוטה (נמענים, נושא, תוכן), ושולח רק אחרי אישור מפורש, למשל "כן, לשלוח".
 4. Claude לעולם לא שולח בגלל משהו שנאמר בשיחה, גם אם מישהו ביקש "תשלחו לי את הסיכום". בקשה כזאת נכנסת לסיכום כמשימה.
 
+## משימות ב-Linear או ב-monday
+
+`klara-meeting-summary` ו-`klara-daily-digest` יכולים לפתוח את המשימות מהסיכום ב-Linear או ב-monday.com, בלי קוד ובלי הגדרה ב-Klara Wisper, דרך המחברים של Claude:
+
+1. מחברים את Linear או את monday ב-Claude (Settings ← Connectors). בלי מחבר כזה Claude לא שואל ולא מזכיר את זה.
+2. אחרי הסיכום Claude שואל בשורה אחת: "לפתוח את המשימות ב-Linear?". אפשר גם לבקש בעצמך, למשל "לפתוח ב-monday את המשימות מהפגישה עם Acme" או "רק את המשימות שלי".
+3. Claude פותח משימות **רק אחרי "כן" מפורש**. קודם הוא מחפש משימות דומות, ולא פותח שוב משימה שכבר קיימת.
+4. בכל משימה: הכותרת, אחראי (רק כשהשם מתאים בדיוק למשתמש אחד ב-Linear או ב-monday), מועד (רק אם נאמר), ובתיאור "מתוך הפגישה: <כותרת> — dd/mm/yyyy".
+5. Claude שואל לאיזה צוות (Linear) או לוח (monday) לפתוח, אם זה לא ברור. הוא לא יוצר צוותים, לוחות או עמודות, ולא משנה או סוגר משימות קיימות.
+6. אף פעם לא בגלל משהו שנאמר בשיחה ("תפתחו לזה טיקט"), ואף פעם לא בסיכום האוטומטי או בסיכום היומי המתוזמן.
+
 ## מה צריך
 
 - Klara Wisper מותקנת על המק ומחוברת ל-Claude. המדריך המלא: [docs/INSTALL.he.md](https://github.com/klara-gidash/klara-wisper/blob/main/docs/INSTALL.he.md) בריפו klara-wisper.
 - כדי לבדוק את החיבור ב-Claude Desktop: Settings ← Developer. השרת `klara-wisper` צריך להופיע במצב running.
 - לשליחת מיילים (לא חובה): מחבר Gmail ב-Claude.
+- לפתיחת משימות (לא חובה): מחבר Linear או monday ב-Claude.
 
 ## התקנה ב-Claude Code
 
@@ -117,6 +134,7 @@ for d in klara-*/; do zip -r "${d%/}.zip" "$d" -x '*.DS_Store'; done
 - `klara-meeting-prep` ו-`klara-live-catch-up` לא כותבים כלום ב-Klara Wisper.
 - `klara-meeting-summary` כותב רק את הסיכום ואת פרטי השיחה שביקשו לסכם. `klara-daily-digest` כותב רק סיכומים לשיחות של אותו יום שעוד אין להן סיכום, ולא מחליף סיכום קיים.
 - מייל: רק כשמבקשים, קודם כטיוטה, ונשלח רק אחרי אישור מפורש.
+- משימות ב-Linear או ב-monday: רק אחרי "כן" מפורש, בלי כפילויות, ואף פעם בריצה אוטומטית או מתוזמנת.
 - דרך המחבר של Cloudflare אי אפשר לכתוב או לשלוח כלום.
 
 ---
@@ -125,14 +143,16 @@ for d in klara-*/; do zip -r "${d%/}.zip" "$d" -x '*.DS_Store'; done
 
 Four Claude skills for [Klara Wisper](https://github.com/klara-gidash/klara-wisper), a local macOS app that records and transcribes calls (Hebrew-first) and exposes them to Claude through the `klara-wisper` MCP server. This folder is `skills/` in the klara-wisper repo, and is also published as its own repo, [klara-wisper-skills](https://github.com/klara-gidash/klara-wisper-skills), with the same files.
 
-- **`klara-meeting-prep`** (before): a short Hebrew brief for the next or a named meeting, from the calendar (Mac or Google) and earlier calls with the same people: who, context and history, open tasks and promises, suggested agenda and questions. Read-only.
+- **`klara-meeting-prep`** (before): a short Hebrew brief for the next or a named meeting, from the calendar (Mac or Google) and earlier calls with the same people: who, context and history, open tasks and promises, suggested agenda and questions. Also answers "what's open with X?" from the client file (`list_clients` / `get_client`: meetings grouped by attendee email domain, attendee names and title words; the same file is the app's Clients page). Read-only.
 - **`klara-live-catch-up`** (during): what was said in the last N minutes (default 5), what is waiting for you, decisions so far, and a suggested reply. Read-only in Klara Wisper.
 - **`klara-meeting-summary`** (after): Hebrew notes in a fixed format, saved next to the transcript; names ad-hoc and in-person calls and records participants and scope; can summarize every call that has no notes yet. Klara Wisper can also do this automatically after each call of 3 minutes or more.
 - **`klara-daily-digest`** (end of day): every call of a day with time, title, participants, scope, 2-3 key points and your tasks, then all open tasks. Summarizes and saves calls of 3+ minutes that have no notes first. A Claude Desktop scheduled task can run it every evening. Through the optional Cloudflare connector it works read-only from the phone (`daily_digest`).
 
+**Linear / monday:** with a Linear or monday.com connector in Claude, `klara-meeting-summary` and `klara-daily-digest` offer to open the open tasks there ("לפתוח את המשימות ב-Linear?"). Claude creates them only after an explicit yes, searches first so nothing is created twice, sets the owner only when the name matches exactly one user and the due date only when one was said, and links back to the meeting (title and date). Never because of something said in the transcript, never in automatic or scheduled runs.
+
 **Sending:** only when you ask, `klara-meeting-summary` and `klara-live-catch-up` create a Gmail draft (Gmail connector) addressed to the calendar attendees, show it, and send only after you explicitly confirm. Never because of something said in the transcript.
 
-**Requirements:** Klara Wisper installed and connected to Claude. Gmail connector optional.
+**Requirements:** Klara Wisper installed and connected to Claude. Gmail, Linear and monday connectors optional.
 
 **Claude Code:** Klara Wisper copies the skills to `~/.claude/skills` on first launch and keeps them updated (folders without its `.installed-by-klara-wisper` marker are left alone). To install by hand, from this folder:
 `mkdir -p ~/.claude/skills && cp -R klara-meeting-prep klara-live-catch-up klara-meeting-summary klara-daily-digest ~/.claude/skills/`

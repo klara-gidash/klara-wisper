@@ -1,7 +1,8 @@
 import { app, clipboard, dialog, ipcMain, shell } from 'electron'
-import { existsSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AppState, Attendee, FollowUp, HealthReport, MeetingMeta, Permissions, Settings } from '@shared/types'
+import { digestSummary, groupClients, type ClientFile, type ClientGroup } from '@shared/clients'
 import { recommend, type Use, type Wishes } from '@shared/plan'
 import { toMarkdown } from '@shared/transcript'
 import { audio } from './audio'
@@ -173,6 +174,33 @@ function followUpUrl(id: string): string | null {
   return `https://mail.google.com/mail/?${q.toString()}`
 }
 
+/** The client file ("לקוחות" page): meetings grouped by company / person / title words (src/shared/clients.ts). */
+function clientList(): { clients: ClientGroup[]; byId: Map<string, MeetingMeta> } {
+  const all = db().listMeetings({ limit: 5000 }).filter((m) => m.status !== 'error')
+  return { clients: groupClients(all, { userName: settings.value.userName }), byId: new Map(all.map((m) => [m.id, m])) }
+}
+
+function clientFile(key: string): ClientFile | null {
+  const { clients, byId } = clientList()
+  const client = clients.find((c) => c.key === key)
+  if (!client) return null
+  const meetings = client.meetingIds.map((id) => {
+    const m = byId.get(id)!
+    let summary: string | null = null
+    try {
+      summary = readFileSync(join(m.folder, 'summary.md'), 'utf8')
+    } catch {
+      // no notes yet
+    }
+    const d = digestSummary(summary)
+    return {
+      id, title: m.title, startedAt: m.startedAt, source: m.source, durationSec: m.durationSec, status: m.status,
+      hasSummary: summary !== null, gist: d.gist, openTasks: d.openTasks, decisions: d.decisions
+    }
+  })
+  return { client, meetings }
+}
+
 function saveMeta(meta: MeetingMeta): void {
   const m = readMeeting(meta.folder)
   if (m) writeMeeting(meta.folder, meta, m.segments)
@@ -307,6 +335,8 @@ export function registerIpc(detector: Detector): void {
     const m = readMeeting(meetingFolder(id))
     if (m) clipboard.writeText(toMarkdown(m.meta, m.segments, settings.value.userName))
   })
+  handle('clients:list', () => clientList().clients)
+  handle('clients:get', (key: string) => clientFile(String(key)))
   handle('search', (q: string) => db().search(q))
   handle('dictations:list', (q?: string) => db().listDictations(q ?? ''))
   handle('clipboard:write', (text: string) => clipboard.writeText(text))

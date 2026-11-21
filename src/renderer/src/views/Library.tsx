@@ -1,4 +1,4 @@
-import { AudioLines, CalendarDays, Keyboard, Search, Settings as SettingsIcon, Users, Video } from 'lucide-react'
+import { AudioLines, Briefcase, CalendarDays, Keyboard, Search, Settings as SettingsIcon, Users, Video } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -6,6 +6,7 @@ import { SOURCE_LABEL } from '@shared/types'
 import { StatusDot, cn } from '../components/ui'
 import { invoke, useAppState, useEvent } from '../lib/api'
 import { modelName } from '../lib/format'
+import { ClientList, ClientView } from './Clients'
 import { Dictations } from './Dictations'
 import { Home } from './Home'
 import { MeetingList } from './MeetingList'
@@ -59,6 +60,8 @@ export function Library() {
   if (section === 'meeting' && arg) content = <MeetingView id={arg} onBack={() => history.back()} />
   else if (section === 'meetings') content = <MeetingList mode="meeting" onOpen={(id) => go(`meeting/${id}`)} />
   else if (section === 'inperson') content = <MeetingList mode="inperson" onOpen={(id) => go(`meeting/${id}`)} />
+  else if (section === 'clients' && arg) content = <ClientView clientKey={route.slice('clients/'.length)} onBack={() => go('clients')} onOpenMeeting={(id) => go(`meeting/${id}`)} />
+  else if (section === 'clients') content = <ClientList onOpen={(key) => go(`clients/${encodeURIComponent(key)}`)} />
   else if (section === 'dictations') content = <Dictations />
   else if (section === 'settings') content = <Settings />
   else if (section === 'search') content = <SearchView query={query} onOpen={(id, q) => go(`meeting/${id}?q=${encodeURIComponent(q)}&t=0`)} />
@@ -99,6 +102,7 @@ export function Library() {
           <NavItem icon={<CalendarDays size={16} />} label={t('nav.today')} active={section === 'library' || section === ''} onClick={() => go('library')} />
           <NavItem icon={<Video size={16} />} label={t('nav.meetings')} active={section === 'meetings'} onClick={() => go('meetings')} />
           <NavItem icon={<Users size={16} />} label={t('nav.inperson')} active={section === 'inperson'} onClick={() => go('inperson')} />
+          <NavItem icon={<Briefcase size={16} />} label={t('nav.clients')} active={section === 'clients'} onClick={() => go('clients')} />
           <NavItem icon={<Keyboard size={16} />} label={t('nav.dictations')} active={section === 'dictations'} onClick={() => go('dictations')} />
         </nav>
         <div className="flex-1" />
