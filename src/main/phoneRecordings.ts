@@ -74,7 +74,8 @@ async function makeMeeting(rec: CloudRecording, wavPath: string): Promise<string
   // The decoded audio becomes the meeting's raw recording, as if it had been recorded here.
   const wav = readFileSync(wavPath)
   writeFileSync(join(folder, '.raw', 'mic.pcm'), wav.subarray(44))
-  if (!(await transcribeSaved(folder, meta, ['mic']))) {
+  // In person: the speakers are told apart (Nemotron + voiceprints) before the meeting counts as done.
+  if (!(await transcribeSaved(folder, meta, ['mic'], { speakers: true }))) {
     const why = meta.error ?? 'transcription failed'
     await shell.trashItem(folder).catch(() => rmSync(folder, { recursive: true, force: true }))
     throw new Error(why)

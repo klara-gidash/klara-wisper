@@ -138,3 +138,12 @@ test('error mapping', () => {
   assert.equal(mapCfError('upload', null, null, Object.assign(new Error('x'), { name: 'TimeoutError' })).code, 'timeout')
   assert.equal(mapCfError('upload', 400, { errors: [{ code: 1, message: 'weird' }] }).code, 'api')
 })
+
+test('schema.sql goes to D1 without comments (apostrophes in comments stay out of the SQL)', async () => {
+  const { stripSqlComments } = await import('../src/main/cloudflareApi.ts')
+  const sql = readFileSync(new URL('../cloudflare/schema.sql', import.meta.url), 'utf8')
+  const clean = stripSqlComments(sql)
+  assert.ok(!clean.includes('--'))
+  assert.match(clean, /CREATE TABLE IF NOT EXISTS meetings/)
+  assert.equal(stripSqlComments("a TEXT DEFAULT '--x', -- the page's id\n\n-- only a comment\nb INT;"), "a TEXT DEFAULT '--x',\nb INT;")
+})

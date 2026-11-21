@@ -22,7 +22,7 @@ Everything lives in **your own private Cloudflare account**: a small database an
    - **The phone recording link**: open it on your phone (see "Recording from your phone"). You can scan the QR code next to it.
 6. Click **"Sync all calls"** to upload the calls you already have. From then on every call uploads by itself after it's saved, and again when it changes (summary, name, participants).
 
-You can delete the API token in Cloudflare after setup: the app doesn't need it to work, only to update the Worker later.
+You can delete the API token in Cloudflare after setup: the app doesn't need it to work. To update the Worker or replace the phone link later, create a new token from the same link and paste it (or tick “keep for updates” during setup).
 
 ## The three tokens
 
@@ -44,7 +44,13 @@ What happens behind the scenes:
 - The audio waits in your Cloudflare account until your computer is on and Klara Wisper is open. Then it downloads the audio, transcribes it **on your computer, with the same Hebrew model**, and **deletes it from the cloud**. What stays is the transcript, like any other call (and if sync is on, that is uploaded as text).
 - A recording not finished within 7 days, or waiting for the computer for 30 days, is deleted from the cloud automatically.
 - The cloud has room for about 400 MB of waiting audio (roughly 25 hours). If it fills up, the phone shows a message and keeps the recording until the computer picks up what's waiting.
-- One recording can last up to about 4 hours.
+- One recording can last up to about 4 hours. Then it stops by itself, and you can start a new one.
+
+Tips:
+
+- Keep the page in front. If you lock the phone or switch to another app, recording may stop (especially on iPhone). What was already recorded is not lost.
+- **Phone call on speaker:** the recording phone has to hear the speaker. It works best when the call itself runs on another device (a second phone, a desk phone or a computer). On iPhone, a cellular call on the same phone may stop the recording.
+- Get the link onto your phone privately: scan the QR code, or use AirDrop, or a message to yourself only. Don't post it to a group.
 
 ## Before you start: what you give up in privacy
 
@@ -165,7 +171,7 @@ If asked to confirm, answer `y`.
 ### 5. Create the three tokens
 
 All three must be different:
-- **Upload token** (`KLARA_TOKEN`): used only by Klara Wisper on your computer.
+- **Upload token** (`KLARA_TOKEN`): used only by Klara Wisper on your computer, to upload calls and to download and delete phone recordings.
 - **Read token** (`KLARA_MCP_TOKEN`): goes in the connector URL in claude.ai; can only read.
 - **Recording token** (`KLARA_REC_TOKEN`): goes in the phone recording link; can only upload recordings.
 
@@ -191,7 +197,7 @@ If wrangler asks whether to create a new Worker named `klara-wisper-gateway`, an
 npx wrangler deploy
 ```
 
-The end of the output shows an address like `https://klara-wisper-gateway.<subdomain>.workers.dev`: that's your Worker. To check it works, open that address with `/api/health` at the end. You should see `{"ok":true,…}`.
+The end of the output shows an address like `https://klara-wisper-gateway.<subdomain>.workers.dev`: that's your Worker. To check it works, open that address with `/api/health` at the end. You should see `{"ok":true,"version":"1.1.0",…}`, ending with `"recordings"`.
 
 ### 7. Connect Klara Wisper
 

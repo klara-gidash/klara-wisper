@@ -1,6 +1,6 @@
 import { existsSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import type { MeetingMeta } from '@shared/types'
+import type { MeetingMeta, Segment } from '@shared/types'
 import { engine } from './engine'
 import { encodeRaw } from './meetings/finalize'
 import { settings } from './settings'
@@ -35,6 +35,8 @@ export async function recoverInterrupted(activeId: string | null): Promise<void>
   }
 }
 
+const SPEAKERS_IDLE_MS = 30 * 60_000 // as the finalizer: the engine silent this long during the speaker step gives up
+
 async function recoverOne(folder: string, meta: MeetingMeta, streams: string[]): Promise<void> {
   await transcribeSaved(folder, meta, streams)
 }
@@ -45,15 +47,17 @@ async function recoverOne(folder: string, meta: MeetingMeta, streams: string[]):
  * for recordings pulled from the phone (phoneRecordings.ts). True when the transcript was saved;
  * on failure the meeting is marked 'error' (and its .raw audio stays).
  */
-export async function transcribeSaved(folder: string, meta: MeetingMeta, streams: string[]): Promise<boolean> {
+export async function transcribeSaved(folder: string, meta: MeetingMeta, streams: string[], opts: { speakers?: boolean } = {}): Promise<boolean> {
   const rawPaths = Object.fromEntries(streams.map((s) => [s, join(folder, '.raw', `${s}.pcm`)]))
   const id = `${meta.id}_r`
+  const diarize = meta.mode === 'inperson' ? ['mic'] : streams.includes('system') ? ['system'] : []
   meta.status = 'processing'
   writeMeta(folder, meta)
-  engine.send({
-    type: 'transcribe.file', id, mode: meta.mode, rawPaths,
-    diarize: meta.mode === 'inperson' ? ['mic'] : streams.includes('system') ? ['system'] : []
-  })
+  // With `speakers`, also wait for who-said-what (the engine sends it after the transcript, read from
+  // .raw, so .raw stays until then), as the finalizer does for a live recording.
+  const speakersP = opts.speakers && diarize.length ? engine.waitIdle('session.speakers', id, SPEAKERS_IDLE_MS) : null
+  speakersP?.catch(() => undefined)
+  engine.send({ type: 'transcribe.file', id, mode: meta.mode, rawPaths, diarize })
   try {
     const seconds = Math.max(...streams.map((s) => statSync(rawPaths[s]).size / 32000))
     const final = await engine.waitFor('session.final', id, Math.max(300_000, seconds * 2000))
@@ -61,14 +65,27 @@ export async function transcribeSaved(folder: string, meta: MeetingMeta, streams
     meta.durationSec = Math.round(seconds)
     meta.endedAt = new Date(new Date(meta.startedAt).getTime() + seconds * 1000).toISOString()
     meta.status = 'done'
-    writeMeeting(folder, meta, final.segments)
+    let segments: Segment[] = final.segments
+    writeMeeting(folder, meta, segments)
+    if (speakersP) {
+      try {
+        const sp = await speakersP
+        if (!sp.skipped && sp.segments) {
+          segments = [...segments.filter((s) => s.stream !== sp.stream), ...sp.segments].sort((a, b) => a.start - b.start)
+          meta.speakers = { ...(meta.mode === 'meeting' ? { me: meta.speakers.me } : {}), ...sp.speakers }
+          writeMeeting(folder, meta, segments)
+        }
+      } catch (err) {
+        console.warn(`recording ${meta.id}: speaker step: ${String((err as Error).message)}`) // the transcript stays as it is
+      }
+    }
     // The transcript is saved; an encoding failure leaves .raw for the next launch (encodeLeftover).
     const encoded = await encodeKept(folder, meta)
     if (encoded !== null) {
       meta.hasAudio = encoded
       writeMeta(folder, meta)
     }
-    db().indexMeeting(meta, final.segments)
+    db().indexMeeting(meta, segments)
     broadcast('meetings:changed', meta.id)
     return true
   } catch (err) {

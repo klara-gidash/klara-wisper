@@ -16,7 +16,7 @@ export async function decodeToPcm16k(bytes: Uint8Array): Promise<Buffer> {
     height: 200,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, images: false, spellcheck: false }
   })
-  // about:blank runs only the code below; the app-wide handlers (index.ts) block navigation and new windows.
+  // An empty page that runs only the code below; the app-wide handlers (index.ts) block navigation and new windows.
   try {
     await win.loadURL('about:blank')
     const wc = win.webContents
@@ -26,7 +26,7 @@ export async function decodeToPcm16k(bytes: Uint8Array): Promise<Buffer> {
       const b64 = buf.subarray(i, i + IN_CHUNK).toString('base64')
       await wc.executeJavaScript(`window.__klaraIn.push(${JSON.stringify(b64)}); 0`)
     }
-    const samples: number = await wc.executeJavaScript(`(async () => {
+    const decoded: number | string = await wc.executeJavaScript(`(async () => {
       const parts = window.__klaraIn.map((b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)))
       window.__klaraIn = null
       const total = parts.reduce((n, p) => n + p.length, 0)
@@ -34,7 +34,12 @@ export async function decodeToPcm16k(bytes: Uint8Array): Promise<Buffer> {
       let o = 0
       for (const p of parts) { all.set(p, o); o += p.length }
       const ctx = new OfflineAudioContext({ numberOfChannels: 1, length: 1, sampleRate: 16000 })
-      const audio = await ctx.decodeAudioData(all.buffer)
+      let audio
+      try {
+        audio = await ctx.decodeAudioData(all.buffer)
+      } catch (e) {
+        return 'undecodable: ' + String((e && e.message) || e) // errors don't cross executeJavaScript well
+      }
       const n = audio.length
       const out = new Int16Array(n)
       const channels = []
@@ -48,6 +53,8 @@ export async function decodeToPcm16k(bytes: Uint8Array): Promise<Buffer> {
       window.__klaraOut = out
       return n
     })()`)
+    if (typeof decoded === 'string') throw new Error(`EncodingError ${decoded}`)
+    const samples = decoded
     const out = Buffer.alloc(samples * 2)
     for (let start = 0; start < samples; start += OUT_CHUNK) {
       const b64: string = await wc.executeJavaScript(`(() => {
@@ -61,8 +68,9 @@ export async function decodeToPcm16k(bytes: Uint8Array): Promise<Buffer> {
     }
     return out
   } catch (err) {
-    const msg = String((err as Error)?.message ?? err)
-    throw new Error(/decode|EncodingError|Unable to decode/i.test(msg) ? 'the recording could not be decoded' : `decoding failed: ${msg}`)
+    const msg = typeof err === 'object' && err && 'message' in err ? String((err as Error).message) : JSON.stringify(err)
+    // decodeAudioData rejects with an EncodingError ("Unable to decode audio data") for a file it can't read.
+    throw new Error(/EncodingError|Unable to decode audio/i.test(msg) ? 'the recording could not be decoded' : `decoding failed: ${msg.slice(0, 200)}`)
   } finally {
     if (!win.isDestroyed()) win.destroy()
   }

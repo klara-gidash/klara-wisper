@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS recordings (
   client_id    TEXT,                             -- the phone page's own id, so a retried start is not a new row
   title        TEXT NOT NULL DEFAULT '',
   kind         TEXT NOT NULL DEFAULT 'inperson', -- inperson or phone
-  mime         TEXT NOT NULL,                    -- audio/webm;codecs=opus or audio/mp4
+  mime         TEXT NOT NULL,                    -- audio/webm (opus) or audio/mp4
   started_at   TEXT NOT NULL,                    -- UTC ISO 8601
   duration_sec INTEGER NOT NULL DEFAULT 0,
   bytes        INTEGER NOT NULL DEFAULT 0,

@@ -167,6 +167,31 @@ export function parseWranglerToml(text: string): WorkerConfig {
   }
 }
 
+/**
+ * Drops `--` comments (outside quotes) and blank lines from schema.sql before it goes to D1's query
+ * endpoint, so an apostrophe or a semicolon in a comment can never confuse its statement splitting.
+ */
+export function stripSqlComments(sql: string): string {
+  const out: string[] = []
+  for (const line of sql.split(/\r?\n/)) {
+    let quote: string | null = null
+    let end = line.length
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i]
+      if (quote) {
+        if (c === quote) quote = null
+      } else if (c === "'" || c === '"') quote = c
+      else if (c === '-' && line[i + 1] === '-') {
+        end = i
+        break
+      }
+    }
+    const kept = line.slice(0, end).trimEnd()
+    if (kept.trim()) out.push(kept)
+  }
+  return out.join('\n')
+}
+
 // ---------- errors ----------
 
 interface CfMessage {
@@ -399,7 +424,7 @@ export async function deployGateway(deps: CfDeps, opts: DeployOptions): Promise<
     await step('schema', async () => {
       const main = opts.config.d1[0]
       if (!main) return
-      const r = await cf.request<{ success?: boolean; error?: string }[]>('schema', 'POST', `${acct}/d1/database/${d1Ids[main.binding]}/query`, { sql: opts.schemaSql })
+      const r = await cf.request<{ success?: boolean; error?: string }[]>('schema', 'POST', `${acct}/d1/database/${d1Ids[main.binding]}/query`, { sql: stripSqlComments(opts.schemaSql) })
       const failed = (r.data.result ?? []).find((x) => x && x.success === false)
       if (failed) throw new CfError('api', { step: 'schema', detail: failed.error ?? 'schema failed' })
     })
