@@ -30,7 +30,8 @@ DATA_DIR = data_dir()
 SOURCE_LABEL = {
     "zoom": "Zoom", "meet": "Google Meet", "teams": "Teams", "slack": "Slack Huddle",
     "facetime": "FaceTime", "webex": "Webex", "aircall": "Aircall", "whatsapp": "WhatsApp", "telegram": "Telegram",
-    "discord": "Discord", "signal": "Signal", "messenger": "Messenger", "goto": "GoTo", "inperson": "in person", "other": "Call",
+    "discord": "Discord", "signal": "Signal", "messenger": "Messenger", "goto": "GoTo", "inperson": "in person",
+    "phone": "Phone", "other": "Call",
 }
 MAX_NOTES = 100_000
 UNTRUSTED = (
@@ -96,6 +97,18 @@ def speaker_name(label: str | None, speakers: dict, user: str) -> str:
     if m:
         return f"דובר {m[2]}" if m[1] == "spk" else f"משתתף {m[2]}"
     return one_line(label, 60)
+
+
+def speaker_label_line(label: str, speakers: dict, user: str) -> str:
+    """A speaker in a meeting's description: the name, and how it was given when that matters
+    (named automatically after the only other calendar guest of a 1:1 call, or not named yet)."""
+    name = speaker_name(label, speakers, user)
+    info = speakers.get(label) or {}
+    if info.get("auto") and info.get("name"):
+        return f"{name} (named automatically from the calendar, 1:1 call)"
+    if not info.get("name") and not info.get("isMe") and label != "me" and re.fullmatch(r"(spk|rem)\d+", label or ""):
+        return f"{name} (not named yet, label {label})"
+    return name
 
 
 def meeting_folders() -> list[Path]:
@@ -211,7 +224,7 @@ def when(iso: str) -> str:
 
 def describe(m: dict) -> str:
     user = settings().get("userName", "")
-    speakers = [speaker_name(l, m.get("speakers", {}), user) for l in m.get("speakers", {})]
+    speakers = [speaker_label_line(l, m.get("speakers", {}), user) for l in m.get("speakers", {})]
     attendees = [
         one_line(f"{a.get('name')} <{a.get('email')}>" if a.get("name") and "@" in (a.get("email") or "") else a.get("name") or a.get("email"), 120)
         for a in m.get("attendees") or [] if not a.get("isMe")
@@ -586,7 +599,8 @@ def set_speaker_name(meeting_id: str, speaker_label: str, name: str) -> str:
     if not clean:
         return "Name is empty."
     folder = Path(meta.pop("folder"))
-    speakers[speaker_label] = {**speakers[speaker_label], "name": clean}
+    # A name the user confirmed is no longer the automatic guess from the calendar.
+    speakers[speaker_label] = {**{k: v for k, v in speakers[speaker_label].items() if k != "auto"}, "name": clean}
     meta["speakers"] = speakers
     atomic_write(folder / "meta.json", json.dumps({**meta, "folder": str(folder)}, ensure_ascii=False, indent=2))
     return f"“{speaker_label}” is now “{clean}”."

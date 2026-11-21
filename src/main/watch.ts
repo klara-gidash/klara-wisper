@@ -5,7 +5,7 @@ import { queueObsidian } from './obsidian'
 import { recorder } from './meetings/recorder'
 import { settings } from './settings'
 import { db } from './storage/db'
-import { meetingsRoot, readMeeting } from './storage/files'
+import { meetingsRoot, readMeeting, refreshMarkdown } from './storage/files'
 import { broadcast } from './windows'
 
 /**
@@ -59,6 +59,12 @@ function onChange(_event: string, filename: string | null): void {
       timers.delete(folder)
       const m = readMeeting(folder)
       if (!m || m.meta.status !== 'done' || m.meta.id === recorder.live?.id) return
+      // A speaker Claude named (MCP set_speaker_name) shows in transcript.md too.
+      try {
+        refreshMarkdown(folder, m.meta, m.segments) // writes only when the text changed
+      } catch (err) {
+        console.warn('library: transcript.md not refreshed', String(err))
+      }
       db().indexMeeting({ ...m.meta, folder }, m.segments)
       broadcast('meetings:changed', m.meta.id)
       queueCloud(m.meta.id) // optional Cloudflare copy: saved, summarized or renamed

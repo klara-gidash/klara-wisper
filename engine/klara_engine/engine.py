@@ -357,9 +357,12 @@ class Session:
             self.emit({"type": "progress", "stage": "speakers", "stream": st.name, "value": 0.0})
             windows = list(e.diarizer.offline_windows(audio)) if e.diarizer is not None else None
             prefix = "spk" if self.mode == "inperson" else "rem"
-            labels, speakers, timeline = assign_speakers(audio, segs, windows, e.encoder, e.store, prefix)
+            # The other side of a call never holds the user's own voice: her saved print isn't matched there.
+            labels, speakers, timeline = assign_speakers(audio, segs, windows, e.encoder, e.store, prefix,
+                                                         exclude_me=self.mode == "meeting")
             if self.mode == "meeting" and len(speakers) <= 1:
-                return  # one voice on the other side: keep the plain "participants" label
+                reply = single_voice_reply(st.name, segs, speakers, round(time.time() - t0, 1)) or reply
+                return
             segs = self._split_at_speaker_changes(st, audio, segs, labels, timeline)
             reply = {"type": "session.speakers", "stream": st.name, "speakers": speakers, "segments": segs,
                      "seconds": round(time.time() - t0, 1)}
@@ -368,6 +371,20 @@ class Session:
             self.emit({"type": "error", "message": f"speaker step failed: {exc}"})
         finally:
             self.emit(reply)
+
+
+def single_voice_reply(stream: str, segs: list[dict], speakers: dict[str, dict], seconds: float) -> dict | None:
+    """One voice on the other side of a call: the lines keep the plain "rem" label, but it now carries
+    that voice's print, and its saved name when the voice is known (a 1:1 call with someone remembered).
+    The app can then name it from the calendar and remember the voice. None: no voiceprint to give."""
+    info = next(iter(speakers.values()), None)
+    if not info or not any(info.get("embedding") or []):
+        return None
+    return {
+        "type": "session.speakers", "stream": stream, "seconds": seconds,
+        "speakers": {"rem": {**info, "isMe": False}},
+        "segments": [{**s, "speaker": "rem"} for s in segs],
+    }
 
 
 def _split_text_job(asr_getter, audio: np.ndarray, vocabulary: list[str], out: dict, key: str):
@@ -433,7 +450,7 @@ class Engine:
             "asr": self.asr.model_key if self.asr else None,
             "diarization": self.diarizer is not None,
             "voiceprints": self.encoder is not None,
-            "voiceprintKeys": {k: {"name": v["name"], "isMe": v.get("isMe", False)} for k, v in self.store.items.items()},
+            "voiceprintKeys": {k: {"name": v["name"], "isMe": v.get("isMe", False), "auto": v.get("auto", False)} for k, v in self.store.items.items()},
         }
 
     def release_memory(self) -> None:
@@ -507,7 +524,7 @@ class Engine:
         elif kind == "voiceprint.enroll":
             threading.Thread(target=self._enroll, args=(msg,), daemon=True).start()
         elif kind == "voiceprint.remember":
-            self.store.put(msg["key"], msg["name"], np.array(msg["embedding"], dtype=np.float32), msg.get("isMe", False))
+            self.store.put(msg["key"], msg["name"], np.array(msg["embedding"], dtype=np.float32), msg.get("isMe", False), bool(msg.get("auto", False)))
             self.emit(self.status())
         elif kind == "voiceprint.remove":
             self.store.remove(msg["key"])

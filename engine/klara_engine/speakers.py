@@ -101,6 +101,17 @@ class SpeakerTracker:
         return {s.label: s.public() for s in self.speakers}
 
 
+def recognise(spks: dict[str, Speaker], centroids: dict[str, np.ndarray], store: VoiceprintStore | None,
+              exclude_me: bool = False) -> None:
+    """Saved voices for the speakers of one recording (each saved voice at most once, see VoiceprintStore.assign)."""
+    if not store or not centroids:
+        return
+    for label, key in store.assign(centroids, exclude_me=exclude_me).items():
+        item = store.items[key]
+        spk = spks[label]
+        spk.key, spk.name, spk.is_me = key, item["name"], item.get("isMe", False)
+
+
 def label_timeline(
     audio: np.ndarray,
     probs: np.ndarray,
@@ -166,15 +177,9 @@ def label_timeline(
         if c not in order:
             order[c] = f"{prefix}{len(order) + 1}"
 
-    speakers: dict[str, dict] = {}
-    for c, label in order.items():
-        spk = Speaker(label=label, centroid=centroids.get(c, np.zeros(192, dtype=np.float32)))
-        if c in centroids and store:
-            hit = store.match(spk.centroid)
-            if hit:
-                item = store.items[hit[0]]
-                spk.key, spk.name, spk.is_me = hit[0], item["name"], item.get("isMe", False)
-        speakers[label] = spk.public()
+    spks = {label: Speaker(label=label, centroid=centroids.get(c, np.zeros(192, dtype=np.float32))) for c, label in order.items()}
+    recognise(spks, {label: centroids[c] for c, label in order.items() if c in centroids}, store)
+    speakers: dict[str, dict] = {label: spk.public() for label, spk in spks.items()}
 
     timeline = [
         (turns[k][0] / FPS, turns[k][1] / FPS, order[labels_by_turn[k]])
@@ -199,8 +204,10 @@ def assign_speakers(
     encoder: VoiceEncoder | None,
     store: VoiceprintStore | None,
     prefix: str,
+    exclude_me: bool = False,
 ) -> tuple[dict[str, str], dict[str, dict], list[tuple[float, float, str]]]:
     """After a recording: who said each segment. Returns ({segment id: label}, speakers map, timeline).
+    `exclude_me`: the other side of a call, where the user's own saved voice can't be.
 
     Turns come from Nemotron windows when available (cleaner single-voice audio), otherwise
     from the transcript segments themselves. Voiceprints of turns are clustered over the whole
@@ -292,13 +299,13 @@ def assign_speakers(
     for k in range(len(turns)):
         order.setdefault(int(owner[k]), f"{prefix}{len(order) + 1}")
     speakers: dict[str, dict] = {}
-    for c, label in order.items():
-        spk = Speaker(label=label, centroid=centroid(c) if c in big_cents else np.zeros(192, dtype=np.float32))
-        if c in big_cents and store:
-            hit = store.match(spk.centroid)
-            if hit:
-                item = store.items[hit[0]]
-                spk.key, spk.name, spk.is_me = hit[0], item["name"], item.get("isMe", False)
+    spks = {
+        label: Speaker(label=label, centroid=centroid(c) if c in big_cents else np.zeros(192, dtype=np.float32))
+        for c, label in order.items()
+    }
+    voiced = {label: spks[label].centroid for c, label in order.items() if c in big_cents}
+    recognise(spks, voiced, store, exclude_me)
+    for label, spk in spks.items():
         speakers[label] = spk.public()
 
     # Each segment takes the speaker it overlaps most.

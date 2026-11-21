@@ -161,8 +161,8 @@ export function Settings() {
     }
   }
 
-  const sources: Exclude<MeetingSource, 'inperson' | 'phone' | 'other'>[] = [
-    'zoom', 'meet', 'teams', 'slack', 'facetime', 'webex', 'aircall', 'whatsapp', 'telegram', 'discord', 'signal', 'messenger', 'goto'
+  const sources: Exclude<MeetingSource, 'inperson' | 'other'>[] = [
+    'zoom', 'meet', 'teams', 'slack', 'facetime', 'phone', 'webex', 'aircall', 'whatsapp', 'telegram', 'discord', 'signal', 'messenger', 'goto'
   ]
   const physical = app.mic.devices.filter((d) => !d.virtual)
   // Windows has its own words (Right Ctrl / Right Alt, the processor instead of the Mac's GPU…) and no FaceTime.
@@ -251,7 +251,7 @@ export function Settings() {
               onClick={() => set({ detect: { ...s.detect, [src]: !s.detect[src] } })}
               className={`flex h-7 items-center gap-1.5 rounded-full border px-3 text-[12.5px] font-medium transition-colors ${s.detect[src] ? 'border-accent/40 bg-accent-soft text-accent-ink' : 'border-line-strong text-ink-3'}`}
             >
-              {s.detect[src] ? <Check size={12} /> : <X size={12} />} {SOURCE_LABEL[src]}
+              {s.detect[src] ? <Check size={12} /> : <X size={12} />} {src === 'phone' ? t('set.detectPhone') : SOURCE_LABEL[src]}
             </button>
           ))}
         </div>

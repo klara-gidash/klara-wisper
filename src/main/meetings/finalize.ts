@@ -7,6 +7,7 @@ import { matchEventChecked, matchVersion } from '../calendar'
 import { engine } from '../engine'
 import { helper } from '../helper'
 import { settings } from '../settings'
+import { autoNameSpeakers } from '../speakerNaming'
 import { autoSummary } from '../summarize'
 import { db } from '../storage/db'
 import { readMeeting, renameMeetingFolder, writeMeeting, writeMeta } from '../storage/files'
@@ -105,6 +106,8 @@ class Finalizer {
       // by its old path (renaming right after the transcript lost the speakers of calendar-named calls).
       this.renameFolder(meta)
     }
+    // Speakers are known now: a 1:1 call's other voice takes the guest's name (before the summary runs).
+    if (job.mode === 'meeting') autoNameSpeakers(meta.folder)
   }
 
   private renameFolder(meta: MeetingMeta): void {

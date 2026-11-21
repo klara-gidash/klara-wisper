@@ -43,6 +43,10 @@ export interface SpeakerInfo {
   key?: string | null
   isMe: boolean
   embedding?: number[]
+  /** Named automatically after the only other calendar attendee of a 1:1 call (shown with "undo"). */
+  auto?: boolean
+  /** The user undid an automatic name: never name this speaker automatically again. */
+  autoRejected?: boolean
 }
 
 export interface Attendee {
@@ -93,6 +97,8 @@ export interface MeetingMeta {
   calendarChecked?: boolean | number
   /** Made from a recording on the phone: its id in the user's Cloudflare Worker (phoneRecordings.ts). */
   cloudRecordingId?: string
+  /** The user closed the "who is this?" card of this meeting. */
+  speakerPromptDismissed?: boolean
 }
 
 /** A recent call worth a follow-up email (home screen). */
@@ -139,7 +145,7 @@ export interface Settings {
   userName: string
   hotkey: HotkeyName
   autoRecord: boolean
-  detect: Record<Exclude<MeetingSource, 'inperson' | 'phone' | 'other'>, boolean>
+  detect: Record<Exclude<MeetingSource, 'inperson' | 'other'>, boolean>
   micUid: string | null // null = automatic
   vocabulary: string[]
   folder: string
@@ -197,7 +203,7 @@ export interface EngineStatus {
   asr?: string | null
   diarization?: boolean
   voiceprints?: boolean
-  voiceprintKeys?: Record<string, { name: string; isMe: boolean }>
+  voiceprintKeys?: Record<string, { name: string; isMe: boolean; auto?: boolean }>
   error?: string
 }
 

@@ -161,8 +161,9 @@ const calls = new CallController({
   needsConfirmation,
   askToRecord: (cand, record) => {
     const he = settings.value.uiLanguage === 'he'
+    const phone = cand.source === 'phone'
     const n = new Notification({
-      title: he ? `שיחה ב-${cand.appName}` : `Call in ${cand.appName}`,
+      title: phone ? (he ? 'שיחת טלפון' : 'Phone call') : he ? `שיחה ב-${cand.appName}` : `Call in ${cand.appName}`,
       body: he ? 'ללחוץ כדי להקליט ולתמלל' : 'Click to record and transcribe',
       silent: true
     })
@@ -171,8 +172,9 @@ const calls = new CallController({
   },
   recording: (cand) => {
     const he = settings.value.uiLanguage === 'he'
+    const phone = cand.source === 'phone'
     new Notification({
-      title: he ? `מקליטה את השיחה ב-${cand.appName}` : `Recording your ${cand.appName} call`,
+      title: phone ? (he ? 'מקליטה את שיחת הטלפון' : 'Recording your phone call') : he ? `מקליטה את השיחה ב-${cand.appName}` : `Recording your ${cand.appName} call`,
       body: he ? 'התמלול מופיע בפאנל. אפשר לעצור בכל רגע.' : 'The transcript shows in the panel. Stop any time.',
       silent: true
     }).show()

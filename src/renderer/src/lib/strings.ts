@@ -103,7 +103,17 @@ export const he = {
     talkTime_one: '{{time}} · שורה אחת',
     talkTime_two: '{{time}} · 2 שורות',
     talkTime_other: '{{time}} · {{count}} שורות',
-    rememberVoice: 'לזכור את הקול'
+    rememberVoice: 'לזכור את הקול',
+    whoTitle: 'מי זה?',
+    whoBody: 'אפשר לבחור מי דיבר, והתמלול והסיכום יציגו את השם. הקול נשמר, ובשיחות הבאות הוא יזוהה לבד.',
+    whoOther: 'שם אחר…',
+    whoLater: 'לא עכשיו',
+    whoListen: 'להשמיע',
+    nameChip: 'לתת את השם ולזכור את הקול',
+    autoNamed: 'השם {{name}} ניתן לבד לפי היומן, כי זו הייתה שיחה אחד על אחד.',
+    autoUndo: 'זה לא {{name}}',
+    autoBadge: 'לפי היומן',
+    autoBadgeTitle: 'השם ניתן לבד לפי המשתתף ביומן'
   },
   rec: {
     startCall: 'התחלת הקלטת שיחה',
@@ -239,6 +249,7 @@ export const he = {
     meetings: 'פגישות',
     autoRecord: 'הקלטה אוטומטית של שיחות',
     autoRecordHint: 'כשהמיקרופון בשימוש באחת האפליקציות האלה, ההקלטה מתחילה לבד',
+    detectPhone: 'שיחות טלפון',
     diarizeRemote: 'הפרדה בין משתתפים בצד השני',
     diarizeRemoteHint: 'עם NVIDIA Nemotron: "משתתף 1", "משתתף 2"…',
     keepAudio: 'שמירת קובץ אודיו',
@@ -577,7 +588,17 @@ export const en: typeof he = {
     talkTime_one: '{{time}} · 1 line',
     talkTime_two: '{{time}} · 2 lines',
     talkTime_other: '{{time}} · {{count}} lines',
-    rememberVoice: 'Remember voice'
+    rememberVoice: 'Remember voice',
+    whoTitle: 'Who is this?',
+    whoBody: 'Pick who spoke and the transcript and notes will show the name. The voice is saved and recognised in later calls.',
+    whoOther: 'Other name…',
+    whoLater: 'Not now',
+    whoListen: 'Play',
+    nameChip: 'Use this name and remember the voice',
+    autoNamed: 'Named {{name}} automatically from the calendar, since this was a 1:1 call.',
+    autoUndo: 'Not {{name}}',
+    autoBadge: 'from calendar',
+    autoBadgeTitle: 'Named automatically after the calendar attendee'
   },
   rec: {
     startCall: 'Record a call',
@@ -713,6 +734,7 @@ export const en: typeof he = {
     meetings: 'Meetings',
     autoRecord: 'Record calls automatically',
     autoRecordHint: 'When one of these apps uses the mic, recording starts by itself',
+    detectPhone: 'Phone calls',
     diarizeRemote: 'Separate remote participants',
     diarizeRemoteHint: 'With NVIDIA Nemotron: “Participant 1”, “Participant 2”…',
     keepAudio: 'Keep audio file',
