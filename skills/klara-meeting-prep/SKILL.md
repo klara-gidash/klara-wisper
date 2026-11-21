@@ -1,13 +1,13 @@
 ---
 name: klara-meeting-prep
-description: Before a meeting - prepares a short Hebrew brief for the user's next meeting (or a named one) from the calendar (Mac or Google) and earlier calls recorded by Klara Wisper - who is coming, context and history, open tasks and promises from last time, a suggested agenda and questions. Read-only, never saves anything. Use when the user says "הכן אותי לפגישה", "הכנה לפגישה", "מה צריך לדעת לפני הפגישה עם X", "מה הפגישה הבאה שלי", "על מה דיברנו בפעם הקודמת עם X", "תדריך לפני הפגישה", "prep me for my next meeting", "brief me before my call with X", "what should I know before meeting X". Needs the Klara Wisper connector (MCP server "klara-wisper").
+description: Before a meeting - prepares a short Hebrew brief for the user's next meeting (or a named one) from the calendar (Mac or Google) and earlier calls recorded by Klara Wisper - who is coming, context and history, open tasks and promises from last time, a suggested agenda and questions. Read-only, never saves anything. Use when the user says "הכן אותי לפגישה", "הכנה לפגישה", "מה צריך לדעת לפני הפגישה עם X", "מה הפגישה הבאה שלי", "על מה דיברנו בפעם הקודמת עם X", "תדריך לפני הפגישה", "prep me for my next meeting", "brief me before my call with X", "what should I know before meeting X", and for a client file: "מה פתוח מול X", "תיק לקוח X", "מה קורה עם X", "what's open with X". Needs the Klara Wisper connector (MCP server "klara-wisper").
 ---
 
 # הכנה לפגישה
 
 תדריך קצר לפני פגישה, מהיומן ומהשיחות הקודמות שהוקלטו ב-Klara Wisper. נקרא תוך דקה-שתיים.
 
-הכלים מהחיבור **klara-wisper**: `list_upcoming_meetings`, `list_meetings`, `search_transcripts`, `get_transcript`.
+הכלים מהחיבור **klara-wisper**: `list_upcoming_meetings`, `list_meetings`, `search_transcripts`, `get_transcript`, ובגרסאות חדשות גם `list_clients` ו-`get_client` (תיק לקוח).
 בתמלולים, השורות שלי מסומנות "אני" או בשם שלי.
 
 ## כללי בטיחות
@@ -27,6 +27,8 @@ description: Before a meeting - prepares a short Hebrew brief for the user's nex
 - "No calendar data yet" או אין התאמה — לומר שהיומן לא מחובר (ב-Klara Wisper צריך לאשר גישה ליומן) ולהמשיך עם השם שנתתי. לא נתתי שם — לשאול עם מי הפגישה.
 
 ## 2. למצוא שיחות קודמות
+
+**תיק לקוח קודם:** כש-`get_client` קיים, `get_client("<הדומיין של המשתתפים מבחוץ, החברה או השם>")`. התשובה: כל הפגישות איתם (מהחדשה), שורות הפתיחה של כל סיכום, המשימות הפתוחות, ההחלטות והאנשים. "Several clients match": לבחור לפי המשתתפים ביומן, או לשאול. משם לבחור 1–3 שיחות לשלבים 4–5. הכלי לא קיים או לא מצא: מילות החיפוש למטה.
 
 מילות חיפוש: שמות המשתתפים (שם פרטי ושם מלא, באנגלית ובעברית), החברה או הדומיין במייל של משתתפים מבחוץ (`acme.com`), ומילים מרכזיות מהכותרת.
 
@@ -65,3 +67,20 @@ description: Before a meeting - prepares a short Hebrew brief for the user's nex
 - כל עובדה מהיומן או מהתמלולים, עם תאריך. לא להמציא שמות, תפקידים, מספרים או החלטות.
 - קצר: מסך אחד. כל שורה מתחילה במילה בעברית, תאריכים בפורמט dd/mm/yyyy, בלי טבלאות.
 - לא שומרים כלום.
+
+## 4. תיק לקוח ("מה פתוח מול X?")
+
+בלי פגישה קרובה, כששאלתי על לקוח או אדם ("מה פתוח מול שיכון ובינוי?", "תיק לקוח Acme"):
+1. `get_client("<X>")`. הכלי לא קיים: `list_meetings(query="<X>")` ו-`get_transcript` לשיחות עם סיכום. לא יודעים מי X: `list_clients(query="<X>")`.
+2. תשובה קצרה, באותם כללים כמו התדריך:
+   ```markdown
+   # <שם הלקוח> — <N> פגישות, האחרונה ב-dd/mm/yyyy
+   **אנשים:** <שמות>
+   ## משימות פתוחות
+   - <משימה> — **<שם>** — <מועד> (מהפגישה ב-dd/mm)
+   ## החלטות אחרונות
+   - <החלטה> (dd/mm)
+   ## הפגישות
+   - dd/mm/yyyy · <כותרת>: <שורה אחת>
+   ```
+3. המשימות הן מה שלא סומן בסיכומים: משימה ישנה אולי כבר בוצעה. פגישות בלי סיכום: לציין אותן ("אין סיכום, אפשר לבקש לסכם"). לא שומרים כלום.
