@@ -192,45 +192,6 @@ def label_for(timeline: list[tuple[float, float, str]], start: float, end: float
     return max(overlap.items(), key=lambda x: x[1])[0] if overlap else None
 
 
-def split_by_speaker(segment: dict, timeline: list[tuple[float, float, str]], min_part_s: float = 1.0) -> list[dict]:
-    """Split a transcribed segment at speaker changes, using its (absolute) word timestamps."""
-    words = segment.get("words") or []
-    if not words:
-        return [{**segment, "speaker": label_for(timeline, segment["start"], segment["end"]) or segment.get("speaker")}]
-    parts: list[dict] = []
-    for w in words:
-        label = label_for(timeline, w["start"], w["end"]) or (parts[-1]["speaker"] if parts else segment.get("speaker"))
-        if parts and parts[-1]["speaker"] == label:
-            parts[-1]["words"].append(w)
-        else:
-            parts.append({"speaker": label, "words": [w]})
-    # Fold tiny parts into a neighbour so one stray word doesn't create a new line.
-    merged: list[dict] = []
-    for p in parts:
-        dur = p["words"][-1]["end"] - p["words"][0]["start"]
-        if merged and (dur < min_part_s or merged[-1]["speaker"] == p["speaker"]):
-            merged[-1]["words"].extend(p["words"])
-        else:
-            merged.append(p)
-    if len(merged) > 1:
-        first = merged[0]
-        if first["words"][-1]["end"] - first["words"][0]["start"] < min_part_s:
-            merged[1]["words"] = first["words"] + merged[1]["words"]
-            merged = merged[1:]
-    out = []
-    for i, p in enumerate(merged):
-        out.append({
-            **segment,
-            "id": segment["id"] if i == 0 else f"{segment['id']}.{i}",
-            "start": p["words"][0]["start"],
-            "end": p["words"][-1]["end"],
-            "text": "".join(w["word"] for w in p["words"]).strip(),
-            "speaker": p["speaker"],
-            "words": p["words"],
-        })
-    return out
-
-
 def assign_speakers(
     audio: np.ndarray,
     segments: list[dict],

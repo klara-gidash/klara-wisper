@@ -47,7 +47,7 @@ function cleanWishes(raw: unknown): Wishes {
 
 const EDITABLE: (keyof Settings)[] = [
   'uiLanguage', 'theme', 'userName', 'hotkey', 'autoRecord', 'detect', 'micUid', 'vocabulary',
-  'keepAudio', 'diarizeRemote', 'restoreClipboard', 'launchAtLogin', 'onboarded', 'calendars', 'autoSummary', 'claudePush', 'claudeConnected'
+  'keepAudio', 'showUnsure', 'diarizeRemote', 'restoreClipboard', 'launchAtLogin', 'onboarded', 'calendars', 'autoSummary', 'claudePush', 'claudeConnected'
 ]
 
 /** Settings the pages may change; the folder only changes through the folder picker. */

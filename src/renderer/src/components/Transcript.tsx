@@ -1,5 +1,7 @@
 import { motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
+import type { ReactNode } from 'react'
+import { timeAt, unsurePieces } from '@shared/confidence'
 import type { Segment, SpeakerInfo } from '@shared/types'
 import { fmtClock, paragraphs, speakerName } from '@shared/transcript'
 import { highlight, speakerColor } from '../lib/format'
@@ -8,6 +10,8 @@ import { cn } from './ui'
 /**
  * Transcript paragraphs: consecutive lines of one speaker grouped under their name.
  * Every line sets its own text direction, so Hebrew, English and mixed lines all read right.
+ * With showUnsure, words the model was unsure of get a dotted underline; clicking one plays the
+ * recording from about there (when there is audio).
  */
 export function Transcript({
   segments,
@@ -17,7 +21,8 @@ export function Transcript({
   activeId,
   onSeek,
   animate = false,
-  compact = false
+  compact = false,
+  showUnsure = false
 }: {
   segments: Segment[]
   speakers: Record<string, SpeakerInfo>
@@ -27,9 +32,36 @@ export function Transcript({
   onSeek?: (t: number) => void
   animate?: boolean
   compact?: boolean
+  showUnsure?: boolean
 }) {
-  const { i18n } = useTranslation()
+  const { t, i18n } = useTranslation()
   const lang = i18n.language as 'he' | 'en'
+  const marks = (text: string, key: string): ReactNode[] =>
+    highlight(text, query).map((h, i) => (h.hit ? <mark key={`${key}.${i}`}>{h.text}</mark> : <span key={`${key}.${i}`}>{h.text}</span>))
+  const body = (l: Segment): ReactNode[] => {
+    if (!showUnsure) return marks(l.text, 'p')
+    return unsurePieces(l).flatMap((piece) =>
+      !piece.unsure ? (
+        marks(piece.text, `p${piece.at}`)
+      ) : (
+        <span
+          key={`u${piece.at}`}
+          className={cn('unsure', onSeek && 'playable')}
+          title={t(onSeek ? 'meeting.unsurePlay' : 'meeting.unsure')}
+          onClick={
+            onSeek
+              ? (e) => {
+                  e.stopPropagation()
+                  onSeek(Math.max(l.start, timeAt(l, piece.at) - 1)) // a second of lead-in
+                }
+              : undefined
+          }
+        >
+          {marks(piece.text, `u${piece.at}`)}
+        </span>
+      )
+    )
+  }
   return (
     <div className={cn('flex flex-col', compact ? 'gap-3' : 'gap-5')}>
       {paragraphs(segments, compact ? 12 : 25).map((p) => {
@@ -52,7 +84,7 @@ export function Transcript({
               </div>
               <div className={cn('selectable', compact ? 'text-[13.5px] leading-[1.65]' : 'text-[15px] leading-[1.75]')}>
                 {p.lines.map((l) => {
-                  const body = (
+                  const line = (
                     <span
                       key={l.id}
                       id={`seg-${l.id}`}
@@ -64,15 +96,15 @@ export function Transcript({
                         onSeek && 'hover:bg-line/60'
                       )}
                     >
-                      {highlight(l.text, query).map((h, i) => (h.hit ? <mark key={i}>{h.text}</mark> : <span key={i}>{h.text}</span>))}
+                      {body(l)}
                     </span>
                   )
                   return animate ? (
                     <motion.span key={l.id} initial={{ opacity: 0, y: 4, filter: 'blur(2px)' }} animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }} transition={{ duration: 0.35 }} className="block">
-                      {body}
+                      {line}
                     </motion.span>
                   ) : (
-                    body
+                    line
                   )
                 })}
               </div>

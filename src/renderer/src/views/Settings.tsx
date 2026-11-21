@@ -261,6 +261,9 @@ export function Settings() {
         <Row label={t('set.keepAudio')} hint={t('set.keepAudioHint')}>
           <Toggle checked={s.keepAudio} onChange={(v) => set({ keepAudio: v })} />
         </Row>
+        <Row label={t('set.showUnsure')} hint={t('set.showUnsureHint')}>
+          <Toggle checked={s.showUnsure !== false} onChange={(v) => set({ showUnsure: v })} />
+        </Row>
         <Row label={t('set.folder')} hint={s.folder}>
           <Button size="sm" icon={<FolderOpen size={13} />} onClick={() => void invoke('app:pickFolder')}>
             {t('set.change')}

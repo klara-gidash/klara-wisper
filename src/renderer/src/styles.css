@@ -113,6 +113,23 @@ a {
   unicode-bidi: plaintext;
 }
 
+/* Words the transcription model was unsure of (src/shared/confidence.ts): a subtle dotted underline. */
+.unsure {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: color-mix(in srgb, var(--warn) 70%, transparent);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.3em;
+  text-decoration-skip-ink: none;
+  border-radius: 3px;
+}
+.selectable .unsure.playable {
+  cursor: pointer;
+}
+.unsure.playable:hover {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
