@@ -1,7 +1,7 @@
 {
   "name": "klara-wisper",
   "productName": "Klara Wisper",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Local meeting transcription and dictation (Whisper large-v3 + Nemotron diarization)",
   "author": "Klara Gidash",
   "license": "MIT",
