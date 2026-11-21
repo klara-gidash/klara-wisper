@@ -9,6 +9,9 @@
 name: E2E simulations
 
 on:
+  # A tag like e2e-1 runs everything (workflow_dispatch needs the file on the default branch first).
+  push:
+    tags: ['e2e-*']
   workflow_dispatch:
     inputs:
       windows:
@@ -33,7 +36,7 @@ env:
 
 jobs:
   build-windows:
-    if: inputs.windows
+    if: github.event_name == 'push' || inputs.windows
     runs-on: windows-2025
     timeout-minutes: 60
     steps:
@@ -129,7 +132,7 @@ jobs:
           retention-days: 14
 
   build-mac:
-    if: inputs.mac
+    if: github.event_name == 'push' || inputs.mac
     runs-on: macos-15
     timeout-minutes: 60
     steps:
