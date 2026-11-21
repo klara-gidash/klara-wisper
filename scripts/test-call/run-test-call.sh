@@ -20,7 +20,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp "$DIR/Info.plist" "$APP/Contents/Info.plist"
 echo "Building FakeZoom.app..."
-xcrun swiftc -O "$DIR/FakeZoom.swift" -o "$APP/Contents/MacOS/FakeZoom" -framework AVFoundation
+xcrun swiftc -O -target arm64-apple-macos14.0 "$DIR/FakeZoom.swift" -o "$APP/Contents/MacOS/FakeZoom" -framework AVFoundation
 codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
 
 SAMPLES=()
