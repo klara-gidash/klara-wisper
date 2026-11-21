@@ -36,6 +36,14 @@ try {
   Initialize-Audio
   & python -X utf8 (Join-Path $E2E 'play.py') --list 2>&1 | Write-Host
 
+  # A Windows 10/11 PC lets desktop apps use the microphone unless the user turned it off. Windows
+  # Server's privacy default is "Deny" (written once something first records), so set the PC default.
+  $mic = 'Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone'
+  foreach ($k in @("HKLM\$mic", "HKCU\$mic", "HKCU\$mic\NonPackaged")) {
+    Write-Host "before: $k = $((Get-ItemProperty -LiteralPath "Registry::$k" -ErrorAction SilentlyContinue).Value)"
+    & reg.exe add $k /v Value /t REG_SZ /d Allow /f | Out-Null
+  }
+  Note 'microphone privacy switches' 'set to Allow (the Windows 10/11 default; Server defaults to Deny)'
   Install-Klara $Setup
   New-Item -ItemType Directory -Force -Path (Join-Path $env:APPDATA 'Claude'), $Folder | Out-Null
   & python -X utf8 (Join-Path $E2E 'make_ics.py') $Ics
@@ -56,6 +64,7 @@ try {
   Start-Sleep 5
   if ($zoomProc.HasExited) { Fail 'fake call app holds the microphone' "zoom.exe exited $($zoomProc.ExitCode): $(Get-Content -Raw -ErrorAction SilentlyContinue (Join-Path $Out 'zoom-err.txt'))" }
   Pass 'fake call started' "zoom.exe pid $($zoomProc.Id) holding $CableOutputName"
+  foreach ($k in @("HKLM\$mic", "HKCU\$mic", "HKCU\$mic\NonPackaged")) { Write-Host "after the call app opened the mic: $k = $((Get-ItemProperty -LiteralPath "Registry::$k" -ErrorAction SilentlyContinue).Value)" }
   Start-Sleep 15
   $entry = Get-ItemProperty -LiteralPath (Join-Path $ConsentKey $ConsentName) -ErrorAction SilentlyContinue
   if ($entry -and $entry.LastUsedTimeStart -and $entry.LastUsedTimeStop -eq 0) {

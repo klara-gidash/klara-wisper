@@ -75,14 +75,18 @@ public sealed class Server
         Thread.Sleep(Timeout.Infinite);
     }
 
-    private static string MicPermission()
+    private static string MicPermission() => MicDeniedBy() == null ? "granted" : "denied";
+
+    /// Which privacy switch blocks the microphone (null = none): Settings > Privacy & security >
+    /// Microphone: the device-wide switch (HKLM), "microphone access" (HKCU), "let desktop apps access".
+    private static string? MicDeniedBy()
     {
-        // Settings > Privacy & security > Microphone: the global switch, then "let desktop apps access".
         const string store = @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
         string? Value(RegistryKey hive, string path) => hive.OpenSubKey(path)?.GetValue("Value") as string;
-        if (Value(Registry.LocalMachine, store) == "Deny" || Value(Registry.CurrentUser, store) == "Deny") return "denied";
-        if (Value(Registry.CurrentUser, store + @"\NonPackaged") == "Deny") return "denied";
-        return "granted";
+        if (Value(Registry.LocalMachine, store) == "Deny") return "device-wide microphone access is off (HKLM)";
+        if (Value(Registry.CurrentUser, store) == "Deny") return "microphone access is off for this user (HKCU)";
+        if (Value(Registry.CurrentUser, store + @"\NonPackaged") == "Deny") return "desktop apps may not use the microphone (HKCU NonPackaged)";
+        return null;
     }
 
     private static Dictionary<string, object?> Permissions() => new()
@@ -111,7 +115,7 @@ public sealed class Server
                     Task.Run(() => { try { Ipc.Reply(id, new() { ["results"] = Scan(ms) }); } catch (Exception e) { Ipc.Fail(id, e); } });
                     break;
                 case "startMic":
-                    if (MicPermission() == "denied") throw new HelperException("microphone permission denied");
+                    if (MicDeniedBy() is string why) throw new HelperException($"microphone permission denied: {why}");
                     Ipc.Reply(id, StartMic(cmd["uid"]?.GetValue<string>()));
                     break;
                 case "stopMic":
