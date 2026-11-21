@@ -1,19 +1,27 @@
 #!/bin/bash
-# End-to-end call test: a fake "Zoom" holds the mic while Hebrew audio plays through the speakers.
+# End-to-end call test on this Mac: a fake "Zoom" app holds the microphone while Hebrew audio plays
+# through the speakers, so Klara Wisper detects a Zoom call, records both sides and transcribes them.
 # Usage: scripts/test-call/run-test-call.sh [seconds]   (default 150)
+#
+# FakeZoom is built as a real .app (bundle id us.zoom.xos.klaratest) and started with `open`, so it is
+# its own app for macOS: the microphone prompt names "FakeZoom" (not Terminal/Claude) and the call
+# detector sees the bundle id "us.zoom.xos…" (Zoom). Its microphone permission is removed at the end.
+# Run it outside real meetings: the calendar match could attach the test call to a meeting happening now.
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/../.." && pwd)"
 BUILD="$DIR/build"
+APP="$BUILD/FakeZoom.app"
 SECS="${1:-150}"
 LOG="$HOME/Library/Application Support/Klara Wisper/main.log"
+BUNDLE_ID=us.zoom.xos.klaratest
 
-mkdir -p "$BUILD"
-echo "Building FakeZoom..."
-xcrun swiftc -O "$DIR/FakeZoom.swift" -o "$BUILD/FakeZoom" \
-  -framework AVFoundation \
-  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$DIR/Info.plist"
-codesign --force --sign - --identifier us.zoom.xos.klaratest "$BUILD/FakeZoom"
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS"
+cp "$DIR/Info.plist" "$APP/Contents/Info.plist"
+echo "Building FakeZoom.app..."
+xcrun swiftc -O "$DIR/FakeZoom.swift" -o "$APP/Contents/MacOS/FakeZoom" -framework AVFoundation
+codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
 
 SAMPLES=()
 for f in he.wav meeting4.wav conversation.wav; do
@@ -23,30 +31,30 @@ done
 cat <<EOF
 
 === Klara Wisper test call ===
-1. Make sure Klara Wisper is running and the speaker volume is up.
-2. If macOS asks for microphone access (for Terminal/FakeZoom), click Allow.
-3. Klara Wisper should show "Zoom call detected" and start recording.
-4. Hebrew audio starts in 8 s. Do not quit this window; it ends by itself in ~${SECS} s.
+1. Klara Wisper must be running, the speaker volume up.
+2. macOS asks once whether "FakeZoom" may use the microphone: click Allow.
+3. Klara Wisper shows the Zoom call and starts recording.
+4. Hebrew audio starts once the microphone is open; it all ends by itself in about ${SECS} s.
 
 EOF
 
-"$BUILD/FakeZoom" "$SECS" &
-FZ=$!
-trap 'kill $FZ 2>/dev/null || true' INT TERM
-
-sleep 8
+open -n "$APP" --args "$SECS"
+# Wait until FakeZoom runs and has the microphone (the prompt may take a moment to answer).
+for i in $(seq 1 120); do
+  pgrep -f "$APP/Contents/MacOS/FakeZoom" >/dev/null && break
+  sleep 1
+done
+pgrep -f "$APP/Contents/MacOS/FakeZoom" >/dev/null || { echo "FakeZoom did not start" >&2; exit 1; }
+sleep 10
 for s in "${SAMPLES[@]}"; do
-  kill -0 $FZ 2>/dev/null || break
+  pgrep -f "$APP/Contents/MacOS/FakeZoom" >/dev/null || break
   echo ">> playing $(basename "$s")"
   afplay "$s" || true
 done
-echo ">> audio done, waiting for FakeZoom to release the mic..."
-wait $FZ || true
+echo ">> audio done, waiting for FakeZoom to release the microphone..."
+while pgrep -f "$APP/Contents/MacOS/FakeZoom" >/dev/null; do sleep 2; done
+tccutil reset Microphone "$BUNDLE_ID" >/dev/null 2>&1 || true
 
-cat <<EOF
-
-=== Done. Where to look ===
-- In the app: a new meeting (Zoom) with a Hebrew transcript.
-- Log: grep -iE "call detected|recording" "$LOG" | tail -20
-EOF
-grep -iE "call detected|recording" "$LOG" 2>/dev/null | tail -20 || echo "(log not found at $LOG)"
+echo
+echo "=== Done. Log: ==="
+grep -iE "call detected|recording|calendar event" "$LOG" 2>/dev/null | tail -15 || echo "(log not found at $LOG)"

@@ -1,12 +1,12 @@
 import { app, clipboard, dialog, ipcMain, shell } from 'electron'
 import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { AppState, Attendee, CalendarEvent, FollowUp, HealthReport, MeetingMeta, Permissions, Settings } from '@shared/types'
+import type { AppState, Attendee, FollowUp, HealthReport, MeetingMeta, Permissions, Settings } from '@shared/types'
 import { recommend, type Use, type Wishes } from '@shared/plan'
 import { toMarkdown } from '@shared/transcript'
 import { audio } from './audio'
 import { matchPastMeetings } from './backfill'
-import { lookupBetween, requestCalendar, shownCalendars, startUpcomingRefresh, upcoming, writeUpcomingCache } from './calendar'
+import { lookupBetween, requestCalendar, shownCalendars, startUpcomingRefresh, upcoming } from './calendar'
 import { connectGoogle, disconnectGoogle, googleLinked, googleState } from './googleCalendar'
 import * as claude from './claude'
 import { engine } from './engine'
@@ -42,10 +42,6 @@ function cleanWishes(raw: unknown): Wishes {
   return { uses: uses.length ? uses : known, language: r.language === 'auto' ? 'auto' : 'he', accurate: r.accurate === true }
 }
 
-/** The Claude connection (MCP) reads upcoming events from this file instead of touching the calendar. */
-export function cacheUpcoming(events: CalendarEvent[], readable = true): void {
-  writeUpcomingCache(events, readable) // never replaces a non-empty cache with an unreadable empty list
-}
 
 const EDITABLE: (keyof Settings)[] = [
   'uiLanguage', 'theme', 'userName', 'hotkey', 'autoRecord', 'detect', 'micUid', 'vocabulary',
@@ -365,7 +361,8 @@ export function registerIpc(detector: Detector): void {
     const names = [...new Set(all.map((e) => e.calendar))]
     const shown = shownCalendars(names)
     const events = all.filter((e) => shown.has(e.calendar))
-    if (!offsetDays) cacheUpcoming(events, r.readable) // what Claude's list_upcoming_meetings reads
+    // Not cached here: the home screen shows one day at a time, and its list (often empty in the evening)
+    // overwrote the 7-day upcoming.json that Claude's list_upcoming_meetings reads (refreshUpcomingCache).
     const calendars = names.map((name) => ({ name, color: all.find((e) => e.calendar === name)?.color ?? null, shown: shown.has(name) }))
     return { events, calendars, google: googleLinked() }
   })

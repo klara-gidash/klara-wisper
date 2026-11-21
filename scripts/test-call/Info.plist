@@ -12,6 +12,8 @@
 	<string>6.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>LSUIElement</key>
+	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>FakeZoom holds the microphone to test Klara Wisper call detection. Audio is discarded.</string>
 </dict>

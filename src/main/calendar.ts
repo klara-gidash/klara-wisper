@@ -52,6 +52,8 @@ export interface CalendarLookup {
   google: boolean
   /** At least one source was readable: an empty `events` then really means "no events". */
   readable: boolean
+  /** For the log: what each source answered. */
+  detail: string
 }
 
 /**
@@ -62,8 +64,8 @@ export interface CalendarLookup {
 export async function lookupBetween(from: Date, to: Date): Promise<CalendarLookup> {
   const [mac, google] = await Promise.all([
     helper.request('calendarEvents', { from: plainIso(from), to: plainIso(to) }).then(
-      (r) => ({ events: (r.events ?? []) as CalendarEvent[], ok: r.status === 'granted' }),
-      () => ({ events: [] as CalendarEvent[], ok: false })
+      (r) => ({ events: (r.events ?? []) as CalendarEvent[], ok: r.status === 'granted', status: String(r.status ?? '?') }),
+      (err) => ({ events: [] as CalendarEvent[], ok: false, status: `error ${String((err as Error)?.message ?? err)}` })
     ),
     (async () => {
       if (!googleLinked()) return { events: [] as CalendarEvent[], ok: false }
@@ -73,7 +75,10 @@ export async function lookupBetween(from: Date, to: Date): Promise<CalendarLooku
     })()
   ])
   const events = google.events.length ? mergeEvents(mac.events, google.events) : mac.events
-  return { events, mac: mac.ok, google: google.ok, readable: mac.ok || google.ok }
+  const names = (list: CalendarEvent[]): string => [...new Set(list.map((e) => e.calendar))].join(', ')
+  const detail = `mac ${mac.status}: ${mac.events.length} events [${names(mac.events)}]` +
+    (googleLinked() ? ` · google ${google.ok ? 'ok' : 'unreadable'}: ${google.events.length} events [${names(google.events)}]` : '')
+  return { events, mac: mac.ok, google: google.ok, readable: mac.ok || google.ok, detail }
 }
 
 export async function eventsBetween(from: Date, to: Date): Promise<CalendarEvent[]> {
@@ -132,8 +137,13 @@ export async function refreshUpcomingCache(): Promise<void> {
   const r = await lookupBetween(from, to)
   const all = r.events.filter((e) => new Date(e.end).getTime() > Date.now())
   const shown = shownCalendars([...new Set(all.map((e) => e.calendar))])
-  writeUpcomingCache(all.filter((e) => shown.has(e.calendar)), r.readable)
+  const kept = all.filter((e) => shown.has(e.calendar))
+  // Logged when it changes (calendar names and counts only, never titles): why "coming up" is empty.
+  const line = `calendar: next 7 days: ${r.detail} → ${kept.length} shown (calendars shown: ${[...shown].join(', ') || 'all'})`
+  if (line !== lastUpcomingLog) console.log((lastUpcomingLog = line))
+  writeUpcomingCache(kept, r.readable)
 }
+let lastUpcomingLog = ''
 
 let upcomingTimer: NodeJS.Timeout | null = null
 /**

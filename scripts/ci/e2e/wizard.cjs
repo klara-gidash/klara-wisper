@@ -51,7 +51,8 @@ async function appPage(browser) {
     for (const ctx of browser.contexts()) {
       for (const p of ctx.pages()) {
         const url = p.url()
-        if (!url.startsWith('devtools://') && url !== 'about:blank') return p
+        // The app also has a small floating "pill" window (#/pill): the wizard is in the main window.
+        if (!url.startsWith('devtools://') && url !== 'about:blank' && !url.includes('#/pill')) return p
       }
     }
     await sleep(1000)

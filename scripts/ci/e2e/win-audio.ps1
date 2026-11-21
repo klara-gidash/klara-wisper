@@ -24,9 +24,15 @@ function Initialize-Audio {
   Pass 'Windows Audio service' 'running'
 
   if (-not (Get-Module -ListAvailable AudioDeviceCmdlets | Where-Object { $_.Version -eq $AudioCmdletsVersion })) {
-    Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
-    Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-    Install-Module AudioDeviceCmdlets -RequiredVersion $AudioCmdletsVersion -Scope CurrentUser -Force
+    # PowerShell 7 (pwsh) has no NuGet package provider to install (Install-PackageProvider fails there):
+    # PSResourceGet when present, else PowerShellGet's Install-Module.
+    if (Get-Command Install-PSResource -ErrorAction SilentlyContinue) {
+      Install-PSResource -Name AudioDeviceCmdlets -Version $AudioCmdletsVersion -Scope CurrentUser -TrustRepository -Reinstall
+    } else {
+      if ($PSVersionTable.PSEdition -ne 'Core') { Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null }
+      Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+      Install-Module AudioDeviceCmdlets -RequiredVersion $AudioCmdletsVersion -Scope CurrentUser -Force -AllowClobber
+    }
   }
   Import-Module AudioDeviceCmdlets -RequiredVersion $AudioCmdletsVersion
 
