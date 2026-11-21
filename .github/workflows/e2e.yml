@@ -70,7 +70,7 @@ jobs:
         scenario: [w1-wizard, w2-call, w3-hebrew-profile, w4-upgrade]
     env:
       E2E_OUT: ${{ github.workspace }}\e2e-out
-      PW_DIR: ${{ runner.temp }}\pw
+      PW_DIR: ${{ github.workspace }}\pw
     steps:
       - uses: actions/checkout@v5
         with:
@@ -160,7 +160,7 @@ jobs:
     timeout-minutes: 120
     env:
       E2E_OUT: ${{ github.workspace }}/e2e-out
-      PW_DIR: ${{ runner.temp }}/pw
+      PW_DIR: ${{ github.workspace }}/pw
     steps:
       - uses: actions/checkout@v5
         with:
