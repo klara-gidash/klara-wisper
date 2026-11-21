@@ -18,7 +18,7 @@ import numpy as np
 from faster_whisper import WhisperModel
 
 from .asr_common import asr_language
-from .asr_common import SAMPLE_RATE, Transcript, _he_en, build_prompt, choose_language, clean
+from .asr_common import SAMPLE_RATE, Transcript, _he_en, build_prompt, choose_language, clean, seg_conf
 from .models import is_downloaded, model_path, verify
 
 N_SAMPLES = 30 * SAMPLE_RATE
@@ -94,4 +94,7 @@ class CT2WhisperASR:
             text=text, lang=lang, lang_probs=_he_en(probs), mixed=mixed,
             avg_logprob=avg_logprob, no_speech_prob=no_speech,
             model=self.model_key, ms=int((time.perf_counter() - t0) * 1000),
+            # Per-utterance only: faster-whisper exposes token probabilities only through its
+            # word-timestamp alignment, an extra pass per utterance (too slow on a laptop CPU).
+            conf=seg_conf(avg_logprob), words=None,
         )

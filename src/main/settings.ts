@@ -20,6 +20,7 @@ export const defaults: Settings = {
   vocabulary: [],
   folder: defaultFolder,
   keepAudio: true,
+  showUnsure: true,
   diarizeRemote: true,
   restoreClipboard: true,
   calendars: null,

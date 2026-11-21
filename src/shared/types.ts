@@ -9,11 +9,16 @@ export type MeetingSource =
 export type RecordingMode = 'meeting' | 'inperson'
 export type HotkeyName = 'fn' | 'rightOption' | 'rightCommand' | 'rightControl'
 
-export interface Word {
-  start: number
-  end: number
-  word: string
-  p?: number
+/**
+ * A word the transcription model was unsure of: its text, probability (0..1) and character offset
+ * in the segment's text. Only unsure words are stored (src/shared/confidence.ts).
+ * `word` is read for very early files that kept every word (word timestamps).
+ */
+export interface UnsureWord {
+  t: string
+  p: number
+  i?: number
+  word?: string
 }
 
 export interface Segment {
@@ -27,7 +32,10 @@ export interface Segment {
   mixed?: boolean
   speaker: string | null
   model?: string
-  words?: Word[]
+  /** How sure the model was of this line, 0..1 (missing in files from before confidence marks). */
+  conf?: number
+  /** Only the words it was unsure of; missing when none (or with the Windows engine, which rates whole lines). */
+  words?: UnsureWord[]
 }
 
 export interface SpeakerInfo {
@@ -136,6 +144,8 @@ export interface Settings {
   vocabulary: string[]
   folder: string
   keepAudio: boolean
+  /** Dotted underline on words the transcription model was unsure of (meeting view). */
+  showUnsure: boolean
   diarizeRemote: boolean
   restoreClipboard: boolean
   launchAtLogin: boolean

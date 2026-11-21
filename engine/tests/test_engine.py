@@ -130,6 +130,11 @@ def test_meeting_two_channels(server):
     assert any(s["stream"] == "system" and s["speaker"] == "rem" and len(s["text"]) > 20 for s in final["segments"])
     assert final["speakers"]["me"]["isMe"] is True
     assert live, "segments should arrive live, before the final pass"
+    # confidence marks: every line rates itself; unsure words (if any) point into the line's text
+    for s in final["segments"]:
+        assert 0.0 <= s["conf"] <= 1.0
+        for w in s.get("words", []):
+            assert s["text"][w["i"] : w["i"] + len(w["t"])] == w["t"] and w["p"] < 0.5
 
 
 def test_inperson_speakers_and_me(server):

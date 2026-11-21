@@ -22,6 +22,7 @@ from pathlib import Path
 from mcp.server.mcpserver import MCPServer
 from mcp_types import ToolAnnotations
 
+from .asr_common import LINE_UNSURE, WORD_UNSURE
 from .paths import data_dir, documents_dir
 
 DATA_DIR = data_dir()
@@ -245,7 +246,33 @@ def describe(m: dict) -> str:
     return fence("\n".join(lines))  # titles, names and scope come from other people
 
 
-def transcript_text(meta: dict) -> str:
+UNSURE_NOTE = (
+    'Lines ending in (unsure: ...) name words the transcription model was not sure about; '
+    '(unsure line) means the whole line may be misheard. Treat those words with care (names, numbers).'
+)
+
+
+def unsure_note(seg: dict) -> str:
+    """A short note for a line the model was unsure of, or "" (most lines). Older files have no
+    confidence fields and get no note."""
+    words = []
+    for w in seg.get("words") or []:
+        if not isinstance(w, dict) or not isinstance(w.get("p"), (int, float)) or w["p"] >= WORD_UNSURE:
+            continue
+        t = one_line(w.get("t") or w.get("word"), 40)
+        if t and t not in words:
+            words.append(t)
+    if words:
+        return f" (unsure: {', '.join(words[:8])})"
+    conf = seg.get("conf")
+    if isinstance(conf, (int, float)) and conf < LINE_UNSURE:
+        return " (unsure line)"
+    return ""
+
+
+def transcript_text(meta: dict, notes: bool = False) -> str:
+    """The transcript as "Speaker [mm:ss]:" paragraphs. notes=True adds a short note to the few lines
+    the model was unsure of (get_transcript); transcript.md itself stays clean."""
     user = settings().get("userName", "")
     out, last = [], None
     for s in segments(meta):
@@ -253,7 +280,7 @@ def transcript_text(meta: dict) -> str:
         if name != last:
             out.append(f"\n{name} [{clock(s.get('start', 0))}]:")
             last = name
-        out.append(s.get("text", ""))
+        out.append(s.get("text", "") + (unsure_note(s) if notes else ""))
     return "\n".join(out).strip()
 
 
@@ -347,7 +374,9 @@ def get_transcript(meeting_id: str) -> str:
     if not meta:
         return f"Meeting {meeting_id} not found. Use list_meetings to see ids."
     notes = Path(meta["folder"]) / "summary.md"
-    body = f"{describe(meta)}\n\n{UNTRUSTED}\n<meeting_content>\n{fence(transcript_text(meta))}\n</meeting_content>"
+    text = transcript_text(meta, notes=True)
+    legend = f"{UNSURE_NOTE}\n" if "(unsure" in text else ""
+    body = f"{describe(meta)}\n\n{legend}{UNTRUSTED}\n<meeting_content>\n{fence(text)}\n</meeting_content>"
     if notes.exists():
         # The notes were written from the transcript (and can be edited by hand), so they are data too.
         body += (

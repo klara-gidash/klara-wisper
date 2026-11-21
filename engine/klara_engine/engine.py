@@ -222,7 +222,7 @@ class Session:
         seg = {
             "id": seg_id, "stream": st.name, "start": round(u.start / SR, 2), "end": round(u.end / SR, 2),
             "text": r.text, "lang": r.lang, "langProbs": r.lang_probs, "mixed": r.mixed,
-            "speaker": label, "model": r.model, "ms": r.ms,
+            "speaker": label, "model": r.model, "ms": r.ms, **confidence(r),
             # seconds between the end of this speech and its text being ready (live sessions)
             "lag": round(time.time() - (self.t0 + u.end / SR), 1) if self.live else None,
         }
@@ -322,7 +322,7 @@ class Session:
         """A segment that two people spoke (no pause between them) is cut where the voice changes
         and each part is transcribed on its own. Only those few segments are re-transcribed."""
         out: list[dict] = []
-        texts: dict[str, str] = {}
+        texts: dict = {}  # part id -> Transcript
         plan: list[tuple[dict, list[tuple[float, float, str]]]] = []
         for seg in segs:
             parts = speaker_parts(timeline, seg["start"], seg["end"]) if timeline else []
@@ -337,9 +337,10 @@ class Session:
                 out.append({**seg, "speaker": labels.get(seg["id"], seg.get("speaker"))})
                 continue
             for i, (a, b, lab) in enumerate(parts):
-                text = texts.get(f"{seg['id']}.{i}", "")
-                if text:
-                    out.append({**seg, "id": f"{seg['id']}.{i}", "start": a, "end": b, "text": text, "speaker": lab})
+                r = texts.get(f"{seg['id']}.{i}")
+                if r is not None and r.text:
+                    base = {k: v for k, v in seg.items() if k not in ("conf", "words")}
+                    out.append({**base, "id": f"{seg['id']}.{i}", "start": a, "end": b, "text": r.text, "speaker": lab, **confidence(r)})
         return out
 
     def _assign_speakers(self, st: StreamState) -> None:
@@ -373,8 +374,19 @@ def _split_text_job(asr_getter, audio: np.ndarray, vocabulary: list[str], out: d
     def run() -> None:
         asr = asr_getter()
         if asr is not None:
-            out[key] = asr.transcribe(audio, vocabulary=vocabulary).text
+            out[key] = asr.transcribe(audio, vocabulary=vocabulary)
     return run
+
+
+def confidence(r) -> dict:
+    """The segment fields for how sure the model was: "conf" (0..1) and, only when some words were
+    unsure, "words" (just those words), so transcript.json stays small."""
+    out: dict = {}
+    if r.conf is not None:
+        out["conf"] = r.conf
+    if r.words:
+        out["words"] = r.words
+    return out
 
 
 def _public(seg: dict) -> dict:

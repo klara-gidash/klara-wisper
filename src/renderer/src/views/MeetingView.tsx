@@ -228,7 +228,7 @@ export function MeetingView({ id: rawId, onBack }: { id: string; onBack: () => v
             (segments.length === 0 ? (
               <div className="py-16 text-center text-[13px] text-ink-3">{meta.status === 'error' ? meta.error : t('meeting.emptyTranscript')}</div>
             ) : (
-              <Transcript segments={segments} speakers={meta.speakers} userName={userName} query={query} activeId={activeId} onSeek={meta.hasAudio ? seek : undefined} />
+              <Transcript segments={segments} speakers={meta.speakers} userName={userName} query={query} activeId={activeId} onSeek={meta.hasAudio ? seek : undefined} showUnsure={app?.settings.showUnsure !== false} />
             ))}
           {tab === 'notes' &&
             (meeting.summary ? (
